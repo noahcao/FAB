@@ -93,3 +93,6 @@ As `fab-world` ([world.md](world.md#outputs)), in the rig's world (z up, metres)
 - Views that see the person from different sides (60-120 degrees apart) triangulate best. Two cameras that both see only
   the person's back, or a joint that only one camera sees, give that view's monocular estimate for the joint.
 - The rig's world should have z up and a known floor (`up`, `floor_z`) for `fab-retarget`.
+- FAB's body is barefoot: with thick soles, planted feet sit at the sole's height above the floor (about 4 cm with
+  sneakers in our tests). `fab-retarget --ground_aware` holds planted feet on the floor with the fused contact
+  probabilities.
