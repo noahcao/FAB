@@ -662,9 +662,11 @@ def export(out, name, views, fps, t, body, pose, betas, trans, joints, verts, va
              origin=np.zeros(3), z0=0.0, depth_factor=np.zeros(T), depth_scale=1.0)
     np.savez(fd / f"{name}_raw.npz", frames=frames, valid=valid, pts=surf.astype(np.float32), surface_idx=np.asarray(surface_idx),
              fps=float(fps))
-    c = np.nan_to_num(contact)
-    np.savez(cd / f"{name}__0.contact.npz", frame=frames, image_static_prob=c[:, 0:4].astype(np.float32),
-             image_hk_static_prob=c[:, 4:8].astype(np.float32), image_any_prob=c[:, 8:12].astype(np.float32),
+    c = np.nan_to_num(contact).astype(np.float32)  # the image head's channels in fab-world's contact-file layout
+    np.savez(cd / f"{name}__0.contact.npz", frame=frames, time=frames / float(fps), fps=np.float32(fps), thr=np.float32(0.5),
+             channels=np.array(["l_heel", "l_toe", "r_heel", "r_toe"]), hk_channels=np.array(["l_hand", "r_hand", "l_knee", "r_knee"]),
+             image_static_prob=c[:, 0:4], image_any_prob=c[:, 8:12], image_hk_static_prob=c[:, 4:8], image_hk_any_prob=c[:, 12:16],
+             image_static=c[:, 0:4] >= 0.5, image_any=c[:, 8:12] >= 0.5,
              source="fab-multiview: the image contact head, fused over the views")
     np.savez(out / f"{name}.npz", **common, gravity_world=np.array([0.0, 0.0, -1.0]), notes=json.dumps(notes))
     return out / f"{name}.npz"
