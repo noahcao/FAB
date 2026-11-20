@@ -17,11 +17,13 @@ Steps (one rule each):
              residual of its nearest joint (on the SMPL template); then each of the 468 dense points and 14 joints is the
              robust (Geman-McClure, 5 cm) weighted mean over the views, weight = the P(visible) of the point's nearest
              joint (at least 0.05); a triangulated joint keeps its triangulated position.
-  5. fit     one SMPL fit per frame to the fused points: the released one-pass fitter, two Gauss-Newton steps (the
+  5. floor   with the rig's floor_z: a knee or foot the image contact head puts on the floor (static contact >= 0.5 in the
+             view that sees it best) has its fused points moved vertically onto the floor (within 20 cm).
+  6. fit     one SMPL fit per frame to the fused points: the released one-pass fitter, two Gauss-Newton steps (the
              release's FastGN, Geman-McClure 50 mm, per-point weights = the fused confidence), then the clip's median
              betas and two more steps with the shape fixed; the release's world smoothing (rotations sigma 2, pelvis
              sigma 3 frames).
-  6. export  fab-world's layout in the rig's world (z up; a flat floor at floor_z), so fab-retarget runs on it unchanged.
+  7. export  fab-world's layout in the rig's world (z up; a flat floor at floor_z), so fab-retarget runs on it unchanged.
 
     fab-multiview rig.json --out output/mv            # or a take folder holding world.json
     fab-multiview rig.json --out output/mv --views cam0,cam1 --subject_boxes boxes/   # <camera name>.npz box (T, 4)
@@ -45,6 +47,7 @@ W_FLOOR = 0.05  # a point's weight in a view is at least this (every view keeps 
 INIT_ERR = 0.05  # init: median reprojection error / person height of a consistent cross-view match
 FOLLOW_ERR = 0.25  # follow: mean distance to the projected previous keypoints / person height
 MIN_TRI = 6  # joints a view's alignment needs
+CONTACT_CAP = 0.20  # m: a predicted floor contact is placed on the floor when it is at most this far from it
 FIT_BATCH = 64  # frames per Gauss-Newton batch (GPU memory)
 # contact channels (l_heel, l_toe, r_heel, r_toe, l_hand, r_hand, l_knee, r_knee) -> the MHR keypoint whose visibility weighs them
 CONTACT_KP = [17, 15, 20, 18, 62, 41, 11, 12]
@@ -420,11 +423,14 @@ def fuse_frame(views, obs, align, vis_idx):
     surf, _ = fuse(Ps, ws)
     j14_w = np.where(tri[J14], 1.0, wk[:, J14].max(0))
     con = np.full(16, np.nan)
+    con_best = np.full(16, np.nan)
     if any(have):
         C = np.stack([o["contact"] if o is not None else np.zeros(16) for o in obs]).astype(np.float64)
         cw = np.tile(wk[:, CONTACT_KP], 2) * np.isfinite(C)
         con = (cw * np.nan_to_num(C)).sum(0) / np.maximum(cw.sum(0), 1e-12)
+        con_best = np.nan_to_num(C)[cw.argmax(0), np.arange(16)]  # the channel in the view that sees its keypoint best
     return {"kp": kp, "tri": tri, "surf": surf, "surf_w": ws.max(0), "j14": kp[J14], "j14_w": j14_w, "contact": con,
+            "contact_best": con_best,
             "align": al, "own": own, "n_views": int(sum(have))}
 
 
@@ -477,6 +483,38 @@ def track_and_fuse(views, people, vis_idx, boxes=None):
 
 
 # ----------------------------------------------------------------------------------------------------------- fit
+
+
+def contact_parts(j14_reg, body):
+    """[(contact channels, joint index in the 14)] for the left / right knee and foot: the joints nearest the SMPL knees
+    and ankles on the template; channels l_knee, r_knee, (l_heel, l_toe), (r_heel, r_toe)."""
+    tmpl = body.v_template.cpu().numpy().astype(np.float64)
+    J = body.J_regressor.cpu().numpy().astype(np.float64) @ tmpl
+    J14t = j14_reg @ tmpl
+    jidx = {k: int(np.linalg.norm(J14t - J[k], axis=1).argmin()) for k in (4, 5, 7, 8)}
+    return [((6,), jidx[4]), ((7,), jidx[5]), ((0, 1), jidx[7]), ((2, 3), jidx[8])]
+
+
+def floor_contacts(frames, valid, surf, j14, vis_idx, parts, floor_z, cap=CONTACT_CAP):
+    """A knee or foot (parts: contact_parts) whose static contact (the image contact head; heel or toe for a foot) is
+    >= 0.5 in the view that sees its keypoint best has its fused dense points (those nearest its joint on the template)
+    and its joint moved vertically so that their lowest point is on the floor, when that is within cap (m).
+    -> surf, j14, the number of placements."""
+    surf, j14 = surf.copy(), j14.copy()
+    n = 0
+    for t, f in enumerate(frames):
+        if f is None or not valid[t]:
+            continue
+        for ch, j in parts:
+            if max(f["contact_best"][list(ch)]) < 0.5:
+                continue
+            m = vis_idx - 70 == j
+            dz = floor_z - surf[t, m, 2].min()
+            if abs(dz) <= cap:
+                surf[t, m, 2] += dz
+                j14[t, j, 2] += dz
+                n += 1
+    return surf, j14, n
 
 
 def smpl_model(device):
@@ -708,6 +746,9 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
     j14 = np.stack([np.nan_to_num(f["j14"]) if v else nan(14, 3) for f, v in zip(frames, valid)])
     j14_w = np.stack([np.where(np.isfinite(f["j14"]).all(1), f["j14_w"], 0.0) if v else np.zeros(14) for f, v in zip(frames, valid)])
     contact = np.stack([f["contact"] if f is not None else nan(16) for f in frames])
+    n_floor = 0
+    if info["floor_z"] is not None:  # the knees and feet the model predicts on the floor, placed on the rig's floor
+        surf, j14, n_floor = floor_contacts(frames, valid, surf, j14, vis_idx, contact_parts(fab.j14, body), float(info["floor_z"]))
     R_fit = np.linalg.inv(views[0].T_world_cam)[:3, :3]
     R, betas, V = fit_sequence(surf, surf_w, j14, j14_w, valid, R_fit, fab.smpl_fitter_path, sidx, fab.j14, device, body)
     pose, trans, joints, verts = world_body(R, V, betas, valid, fps, body)
@@ -719,7 +760,8 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
     surf_f = fill_invalid(np.nan_to_num(surf), valid)
     stats = {"frames": T, "valid": float(valid.mean()), "views_per_frame": float(np.mean([f["n_views"] if f else 0 for f in frames])),
              "triangulated_joints": float(np.mean([f["tri"][J14].mean() for f in frames if f is not None])),
-             "subject_per_view": {v.name: float((sel[:, j] >= 0).mean()) for j, v in enumerate(views)}}
+             "subject_per_view": {v.name: float((sel[:, j] >= 0).mean()) for j, v in enumerate(views)},
+             "floor_contacts": n_floor}
     notes = {"pipeline": "fab-multiview (docs/multiview.md): the released FAB per view, keypoints triangulated, dense points "
                          "fused with the visibility head's P(visible), one SMPL fit per frame, the release's world smoothing",
              "rig": info["source"], "cameras": [v.name for v in views], "model": model, "fast": fast,

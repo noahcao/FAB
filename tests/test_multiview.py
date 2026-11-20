@@ -303,6 +303,27 @@ class FuseFrame(unittest.TestCase):
         self.assertLess(np.abs(f["surf"] - surf).max(), 1e-5)
 
 
+class Floor(unittest.TestCase):
+    def test_predicted_contacts_placed_on_the_floor(self):
+        rng = np.random.default_rng(10)
+        vis_idx = rng.integers(70, 84, 468)
+        surf = rng.normal(size=(3, 468, 3)) * 0.1 + [0, 0, 0.5]
+        knee = vis_idx - 70 == 1
+        surf[:, knee, 2] = rng.uniform(0.08, 0.2, (3, knee.sum()))  # the knee's points 8-20 cm above a floor at 0
+        j14 = np.zeros((3, 14, 3))
+        frames = [{"contact_best": np.zeros(16)} for _ in range(3)]
+        frames[0]["contact_best"][6] = 0.8  # frame 0: l_knee on the floor
+        frames[2]["contact_best"][6] = 0.4  # frame 2: below the threshold
+        s2, j2, n = mv.floor_contacts(frames, np.ones(3, bool), surf, j14, vis_idx, [((6,), 1)], 0.0)
+        self.assertEqual(n, 1)
+        self.assertAlmostEqual(s2[0, knee, 2].min(), 0.0)
+        self.assertTrue(np.allclose(s2[0, ~knee], surf[0, ~knee]) and np.allclose(s2[1:], surf[1:]))
+        self.assertAlmostEqual(j2[0, 1, 2], -surf[0, knee, 2].min())
+        far = surf.copy()
+        far[0, knee, 2] += 0.5  # 58-70 cm up: more than the cap, left as it is
+        self.assertEqual(mv.floor_contacts(frames, np.ones(3, bool), far, j14, vis_idx, [((6,), 1)], 0.0)[2], 0)
+
+
 class SingleViewUnchanged(unittest.TestCase):
     def test_import_changes_no_release_default(self):
         code = ("import copy, inspect, json, sys; import fab.predictor as P; "
