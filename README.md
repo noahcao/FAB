@@ -45,6 +45,7 @@ fab assets/demo/skater_seated.jpg --out output/fab               # one image
 fab-video assets/demo/dancer_street.mp4 -o output/dancer.mp4     # a video
 fab-world assets/demo/steps_up.mp4 --out output/world            # world motion + scene
 fab-retarget output/world/steps_up.npz --out output/g1           # G1 motion on that scene
+fab-multiview rig.json --out output/mv                           # several calibrated cameras, fused
 ```
 
 - `fab-retarget --mode mesh` or `--mode skeleton` retargets from the fitted mesh or the joints instead of the dense points.
@@ -59,6 +60,7 @@ fab-retarget output/world/steps_up.npz --out output/g1           # G1 motion on 
 | `fab-video` | `<out>.mp4`, `<out>.jpg`, `<out>.pkl` | a render, a poster frame, per-frame results with tracks, smoothed outputs and video contacts |
 | `fab-world` | `<out>/<name>.npz`, `_scene.ply`, `_hfield.npz` | cameras, the world SMPL body, contacts; scene mesh and heightfield ([world](docs/world.md)) |
 | `fab-retarget` | `<out>/<name>_g1.npz` + `.json` | G1 joint angles and root pose at 50 fps ([retarget](docs/retarget.md)) |
+| `fab-multiview` | `<out>/<name>.npz` + `work/` | the fused world body from several calibrated cameras, in `fab-world`'s layout ([multiview](docs/multiview.md)) |
 
 ## Models
 
@@ -74,7 +76,7 @@ FAB-H: compiled PyTorch). FAB-H fits SMPL to its MHR mesh (MHR mesh → SMPL; `-
 
 ## Documentation
 
-[Usage](docs/usage.md) (Python API, outputs, options) · [World](docs/world.md) · [Retarget](docs/retarget.md) ·
+[Usage](docs/usage.md) (Python API, outputs, options) · [World](docs/world.md) · [Multi-view](docs/multiview.md) · [Retarget](docs/retarget.md) ·
 [Retarget-EE](docs/retarget_ee.md) · [Contact](docs/contact.md) · [Acceleration](docs/acceleration.md) ·
 [Training](docs/training.md) ([data format](docs/training_data.md)) · [Evaluation](docs/evaluation.md) · [Reproduce the paper](docs/reproduce.md) ·
 [Datasets](datasets/README.md) · [Troubleshooting](docs/troubleshooting.md)
