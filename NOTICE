@@ -1,0 +1,20 @@
+FAB: Fast and Accurate Body Estimation
+Copyright 2026 the FAB authors
+
+This product is licensed under the Apache License, Version 2.0 (LICENSE), with these exceptions:
+
+- Files derived from SAM 3D Body (Copyright (c) Meta Platforms, Inc. and affiliates), marked
+  "SPDX-License-Identifier: LicenseRef-SAM-License" and listed in THIRD_PARTY_NOTICES.md, are licensed under the SAM
+  License (third_party_licenses/SAM-License.txt).
+- The vendored DINOv3 code in fab/models/backbones/dinov3_vit/ (Copyright (c) Meta Platforms, Inc. and affiliates),
+  marked "SPDX-License-Identifier: LicenseRef-DINOv3-License", is licensed under the DINOv3 License
+  (third_party_licenses/DINOv3-License.md).
+- All model weights (including the person detector and the SMPL fitters) and exports derived from them use WEIGHTS_LICENSE.
+
+FAB's install script scripts/download_g1.sh fetches Unitree's G1 description (unitree_ros, robots/g1_description, commit
+157ff950351e5f535e03c5d85a16b7d594b3dbcc; BSD 3-Clause, Copyright Unitree Robotics) and builds FAB's G1 files from it
+(scripts/build_g1.py); none of it is shipped.
+
+This product includes code adapted from pymomentum (MIT License, Copyright (c) Meta Platforms, Inc. and affiliates)
+and MHR (Apache License 2.0, Meta Platforms, Inc.). Their notices are in THIRD_PARTY_NOTICES.md and their licence texts
+in third_party_licenses/.

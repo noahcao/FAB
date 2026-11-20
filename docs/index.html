@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAB: Fast and Accurate Body Estimation in Pixels, World Space and Scenes</title>
+<meta name="description" content="FAB: fast and accurate human body estimation in pixels, world space and scenes, with retargeting to a Unitree G1.">
+<style>
+  :root {
+    --fg: #1d1d1f; --muted: #5f6368; --bg: #ffffff; --panel: #f6f7f9; --line: #e3e5e8;
+    --accent: #c4601a; --accent-bg: #fbeee4; --pend: #8a6d00; --pend-bg: #fff6d6;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 0 20px 64px; }
+  header { text-align: center; padding: 56px 0 24px; }
+  h1 { font-size: 2.3rem; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h1 .short { color: var(--accent); }
+  .subtitle { font-size: 1.25rem; color: var(--muted); margin: 0 0 18px; }
+  .authors { font-size: 1.05rem; margin: 0 0 4px; }
+  .affil { color: var(--muted); font-size: 0.95rem; margin: 0 0 22px; }
+  .affil a { color: var(--muted); }
+  .links { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .links a, .links span { display: inline-block; padding: 8px 20px; border-radius: 999px; background: var(--fg); color: #fff;
+    text-decoration: none; font-weight: 600; font-size: 0.95rem; }
+  .links a:hover { opacity: 0.88; }
+  .links span.soon { background: #9aa0a6; cursor: default; }
+  .links a.sec { background: #fff; color: var(--fg); border: 1.5px solid var(--fg); padding: 6.5px 18px; }
+  .links .sep { width: 1px; background: var(--line); margin: 4px 6px; padding: 0; border-radius: 0; }
+  .links span.grp { display: inline-flex; gap: 10px; flex-wrap: wrap; justify-content: center; background: none; padding: 0; border-radius: 0; }
+  @media (max-width: 640px) { .links .sep { display: none; } }
+  nav.toc { display: flex; gap: 6px 16px; justify-content: center; flex-wrap: wrap; margin: 18px 0 0; font-size: 0.92rem; }
+  nav.toc a { color: var(--muted); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); }
+  section { margin-top: 52px; }
+  h2 { font-size: 1.5rem; margin: 0 0 14px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.1rem; margin: 28px 0 8px; }
+  p { margin: 0 0 12px; }
+  a { color: var(--accent); }
+  .note { color: var(--muted); font-size: 0.93rem; }
+  figure { margin: 0; }
+  figure img, figure video { width: 100%; height: auto; display: block; border-radius: 6px; background: #000; }
+  figure img { background: none; }
+  figcaption { color: var(--muted); font-size: 0.92rem; margin-top: 8px; line-height: 1.5; }
+  .abstract { text-align: justify; hyphens: auto; }
+  .videos { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .trio { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .half { max-width: calc(50% - 7px); margin: 0 auto; }
+  @media (max-width: 800px) { .pair, .trio { grid-template-columns: 1fr; } .half { max-width: none; } }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+  .tabs button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 12px; font-size: 0.85rem;
+    cursor: pointer; color: var(--fg); }
+  .tabs button.on { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .placeholder { aspect-ratio: 16 / 9; width: 100%; border: 2px dashed var(--line); border-radius: 6px; display: flex;
+    flex-direction: column; align-items: center; justify-content: center; color: var(--muted); background: var(--panel);
+    text-align: center; padding: 16px; }
+  .placeholder.short { aspect-ratio: auto; min-height: 120px; }
+  .lg { white-space: nowrap; margin-right: 10px; }
+  .lg i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: 0; box-sizing: border-box; }
+  .highlights { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 4px 0 22px; }
+  .highlights div { background: var(--panel); border-radius: 8px; padding: 14px 16px; font-size: 0.92rem; color: var(--muted); }
+  .highlights b { display: block; font-size: 1.35rem; color: var(--accent); }
+  .table-wrap { overflow-x: auto; margin: 6px 0 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+  th, td { padding: 5px 8px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { border-bottom: 1px solid var(--fg); font-weight: 600; }
+  thead tr.group th { border-bottom: 1px solid var(--line); text-align: center; color: var(--muted); font-weight: 600; }
+  tbody tr { border-bottom: 1px solid var(--line); }
+  tbody tr.sep td { background: var(--panel); color: var(--muted); font-style: italic; text-align: left; padding: 4px 8px; }
+  tbody tr.ours td { background: var(--accent-bg); }
+  .pending { display: inline-block; background: var(--pend-bg); color: var(--pend); border: 1px solid #f0dc8c; border-radius: 4px;
+    font-size: 0.78rem; font-weight: 600; padding: 0 6px; margin: 0 2px; vertical-align: 1px; }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; overflow-x: auto;
+    font-size: 0.85rem; line-height: 1.45; margin: 0; }
+  .bib { position: relative; }
+  .bib button { position: absolute; top: 8px; right: 8px; border: 1px solid var(--line); background: #fff; border-radius: 6px;
+    padding: 3px 10px; font-size: 0.8rem; cursor: pointer; color: var(--fg); }
+  .credits-list { font-size: 0.85rem; color: var(--muted); padding-left: 1.2em; }
+  .credits-list li { margin: 4px 0; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; text-align: center; }
+  @media (max-width: 640px) { body { font-size: 16px; } h1 { font-size: 1.7rem; } .subtitle { font-size: 1.05rem; } }
+  /* carousel (USER 11-18, DuoMo-style): centre card, neighbours peek faded; local JS below */
+  .carousel { position: relative; margin: 6px 0 4px; outline: none; }
+  .carousel:focus-visible { outline: 2px solid #9aa0a6; outline-offset: 4px; border-radius: 18px; }
+  .car-stage { position: relative; overflow: hidden; padding: 16px 0 24px; touch-action: pan-y; }
+  .car-sizer { width: 70%; margin: 0 auto; visibility: hidden; }
+  .car-item { position: absolute; top: 16px; left: 50%; width: 70%; transform: translateX(-50%); transform-origin: 50% 50%;
+    transition: transform 0.45s ease, opacity 0.45s ease; cursor: pointer; }
+  .car-item.c { cursor: default; z-index: 2; }
+  .car-card { background: #fff; border-radius: 16px; padding: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06); }
+  .car-card video { display: block; width: 100%; height: auto; border-radius: 10px; background: #000; }
+  .car-item:not(.c) video { pointer-events: none; }
+  .car-btn { position: absolute; top: calc(50% - 29px); z-index: 3; width: 44px; height: 44px; border-radius: 50%; padding: 0;
+    border: 1px solid var(--line); background: #fff; color: var(--fg); font-size: 28px; line-height: 40px; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); }
+  .car-btn:hover { background: var(--panel); }
+  .car-prev { left: 6px; } .car-next { right: 6px; }
+  .car-label { text-align: center; color: var(--muted); font-size: 0.92rem; margin-top: -6px; padding-bottom: 4px; }
+  @media (max-width: 800px) { .car-sizer, .car-item { width: 100%; } .car-item:not(.c) { opacity: 0 !important; pointer-events: none; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1><span class="short">FAB</span>: Fast and Accurate Body Estimation</h1>
+  <p class="subtitle">in Pixels, World Space and Scenes</p>
+  <p class="authors">Jinkun Cao</p>
+  <p class="affil"><a href="https://www.jinkuncao.com">www.jinkuncao.com</a></p>
+  <nav class="links">
+    <a href="https://arxiv.org/abs/2611.25801">Paper (arXiv)</a>
+    <a href="https://github.com/noahcao/FAB">Code</a>
+    <a href="https://huggingface.co/noahcao/FAB">Models</a>
+    <a href="#bibtex">BibTeX</a>
+    <span class="sep" aria-hidden="true"></span>
+    <span class="grp"><a class="sec" href="https://www.jinkuncao.com/FAH/">FAH (hands)</a><a class="sec" href="https://github.com/noahcao/FAH">FAH code</a></span>
+  </nav>
+  <nav class="toc"><a href="#teaser">Teaser</a><a href="#abstract">Abstract</a><a href="#method">Method</a><a href="#camera">Images / Videos</a><a href="#world">Video and world</a><a href="#scenes">Scenes</a><a href="#humanoid">Humanoid</a><a href="#dance">Many people</a><a href="#egoexo">Ego + exo</a><a href="#numbers">Key numbers</a><a href="#bibtex">BibTeX</a></nav>
+</header>
+
+<section id="teaser" style="margin-top: 28px;">
+  <figure><video controls autoplay muted playsinline loop preload="auto" poster="assets/videos/teaser/teaser_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/teaser/teaser.mp4" type="video/mp4"></video><figcaption>Teaser. Sources and licences: Credits. </figcaption></figure>
+</section>
+
+<section id="abstract">
+  <h2>Abstract</h2>
+  <p class="abstract">We present FAB (<b>F</b>ast and <b>A</b>ccurate <b>B</b>ody estimation), a human body estimator that achieves leading inference efficiency and body recovery faithfulness at the same time. As a 3D human pose estimator, FAB&rsquo;s core is to predict human skeleton joints and surface dense points directly, rather than only parametric mesh model parameters. In pixels, FAB predicts dense 2D and 3D body points directly, alongside a parametric (MHR) head, and fits SMPL to them in one learned pass and two Gauss&ndash;Newton steps. Its ViT-L student FAB-L, distilled from a fine-tuned SAM 3D Body, runs in real time for one person on one RTX 4070 Ti SUPER, from person detection to a fitted body, 4.6&times; faster than SAM 3D Body&rsquo;s body-only path in eager PyTorch, and is more accurate than SAM 3D Body on most camera-space benchmarks. The same network predicts heel, toe, hand, and knee contacts, which tie the body to the scene. In world space, FAB-L is more accurate than many recent methods. In scenes, FAB fuses the static scene&rsquo;s depth around the visible person and aligns the scene and body through the predicted contacts. FAB also brings convenience for the robotics task of human-to-humanoid real-to-sim motion transfer. An in-model G1 head and FAB-Retarget, a motion-level retargeter that reads the dense points (or the mesh fitted to them), map the motion to a Unitree G1. FAB-Retarget&rsquo;s references follow the person more closely than those of the specialized retargeters (SOMA, GMR, UMR, OmniRetarget) and much more closely than Fast SAM 3D Body&rsquo;s body retargeted by our sequence IK.</p>
+</section>
+
+<section id="method">
+  <h2>Method</h2>
+  <figure><img src="assets/img/overview_page.jpg" alt="The FAB pipeline: one network per person and frame predicts dense points, 2D keypoints, body parts and heel / toe contacts, and the SMPL body is fitted to the points; per clip, the body is placed in a metric world, the scene is fused around it and the motion is retargeted from the dense points to a Unitree G1" width="2766" height="1132" loading="lazy"><figcaption><b>One network per person and frame predicts dense points, keypoints, body parts and heel / toe contacts; SMPL is fitted to the points.</b> Per clip: a metric, gravity-aligned world; the scene placed on the body via contacts; the motion retargeted to a Unitree G1 from the dense points (red frames). Walls cut above 0.5&nbsp;m. Images: EMDB.</figcaption></figure>
+
+</section>
+
+<section id="camera">
+  <h2>Images / Videos</h2>
+  <h3>Every output, every frame</h3>
+  <p class="note">FAB-L on every frame on its own (per-frame image model, no temporal smoothing), with the ground-truth box, on one crop around the person: 2D keypoints with heel / toe contacts (red: planted), body parts, the SMPL body fitted to the points and the dense 3D points (the side facing the camera). One re-run of the paper&rsquo;s FAB-L on EMDB (per-clip MPJPE within 0.07&nbsp;mm of the paper&rsquo;s). Bystander faces blurred.</p>
+  <div class="trio">
+    <figure><video controls muted playsinline loop preload="none" poster="assets/videos/fab4/emdb_P8_69_outdoor_cartwheel_poster.jpg" width="720" height="960"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/fab4/emdb_P8_69_outdoor_cartwheel.mp4" type="video/mp4"></video><figcaption>EMDB P8_69</figcaption></figure>
+    <figure><video controls muted playsinline loop preload="none" poster="assets/videos/fab4/emdb_P6_51_outdoor_dancing_poster.jpg" width="720" height="960"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/fab4/emdb_P6_51_outdoor_dancing.mp4" type="video/mp4"></video><figcaption>EMDB P6_51</figcaption></figure>
+    <figure><video controls muted playsinline loop preload="none" poster="assets/videos/fab4/emdb_P6_47_outdoor_run_slalom_poster.jpg" width="720" height="960"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/fab4/emdb_P6_47_outdoor_run_slalom.mp4" type="video/mp4"></video><figcaption>EMDB P6_47</figcaption></figure>
+  </div>
+  
+</section>
+
+<section id="world">
+  <h2>Video and world</h2>
+  <p>FAB-L&rsquo;s world reconstruction from one moving camera: the scene fused from the video and coloured from its frames, the body in blue while it is in the image and grey when it is not, foot contacts from the video contact model as red dots, and the camera with its path. Top left: the input (bystanders blurred).</p>
+  <div class="carousel" tabindex="0" role="region" aria-roledescription="carousel" aria-label="Single-method world clips"><div class="car-stage"><div class="car-sizer" aria-hidden="true"><div class="car-card"><div style="aspect-ratio: 1920 / 1080;"></div></div></div><div class="car-item" data-label="EMDB P3_28"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/world/emdb_P3_28_single_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/world/emdb_P3_28_single.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="EMDB P9_79"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/world/emdb_P9_79_single_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/world/emdb_P9_79_single.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="EgoBody 20220218_S23_S02_02"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/world/ego_ego_20220218_S23_S02_02_single_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/world/ego_ego_20220218_S23_S02_02_single.mp4" type="video/mp4"></video></div></div><button type="button" class="car-btn car-prev" aria-label="Previous">&lsaquo;</button><button type="button" class="car-btn car-next" aria-label="Next">&rsaquo;</button></div><div class="car-label" aria-live="polite">EMDB P3_28</div></div>
+  <p class="note" style="margin-top: 8px;">Picked by our WA-MPJPE gain over GVHMR on the 25 EMDB-2 sequences: the single-method clips are P3_28 (8th of 25) and P9_79 (19th), the nearest passes to one third and two thirds; the 6 smallest gains (1st&ndash;6th, including the two where GVHMR is better) and the 6 largest (20th&ndash;25th) failed our scene check (planted feet within &plusmn;5&nbsp;cm of the reconstructed scene) in their 8&nbsp;s windows. Comparisons below: P3_29 (14th of 25), P3_27 (6th), the RICH-191 clip nearest the median gain, and P9_79 (19th). On EgoBody the floor under the feet is only partly reconstructed, and the planted feet sit about 7&nbsp;cm above the floor around them.</p>
+  <h3>Ours | DuoMo | GVHMR</h3>
+  <p class="note"><span class="lg"><i style="background:#3b7ddd"></i>human visible</span> <span class="lg"><i style="background:#9aa0a6"></i>not in image</span> <span class="lg"><i style="background:#fff; border: 2px solid #c0392b"></i>foot contact</span> &middot; Left: ours, then the baselines (released code). A body is blue while at least half of the ground-truth body&rsquo;s joints are in the image and grey otherwise, by the same rule for every method.</p>
+  <div class="carousel" tabindex="0" role="region" aria-roledescription="carousel" aria-label="Ours, DuoMo and GVHMR world comparisons"><div class="car-stage"><div class="car-sizer" aria-hidden="true"><div class="car-card"><div style="aspect-ratio: 1920 / 1080;"></div></div></div><div class="car-item" data-label="EMDB P3_29"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/world/emdb_P3_29_three_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/world/emdb_P3_29_three.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="EMDB P3_27"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/world/emdb_P3_27_three_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/world/emdb_P3_27_three.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="RICH Gym_011_pushup2"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/world/rich_Gym_011_pushup2_cam_02_three_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/world/rich_Gym_011_pushup2_cam_02_three.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="EMDB P9_79"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/world/emdb_P9_79_three_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/world/emdb_P9_79_three.mp4" type="video/mp4"></video></div></div><button type="button" class="car-btn car-prev" aria-label="Previous">&lsaquo;</button><button type="button" class="car-btn car-next" aria-label="Next">&rsaquo;</button></div><div class="car-label" aria-live="polite">EMDB P3_29</div></div>
+</section>
+
+<section id="scenes">
+  <h2>Scenes</h2>
+  <p>FAB fuses the static scene&rsquo;s depth around the visible person and aligns scene and body through the predicted contacts. On the same videos as VideoMimic&rsquo;s released real2sim pipeline, our scene is more accurate per frame on RICH, and, placed by the ground-truth camera, our body lies closer to the scanned contact surfaces. All four methods ran on the same video, with no tuning on this clip.</p>
+  <figure><video controls muted playsinline loop preload="none" poster="assets/videos/scenes/emdb_P3_30_scene_cmp_in_poster.jpg" width="1920" height="760"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/scenes/emdb_P3_30_scene_cmp_in.mp4" type="video/mp4"></video><figcaption>EMDB P3_30</figcaption></figure>
+</section>
+
+<section id="humanoid">
+  <h2>Humanoid</h2>
+  <p>Each retargeter&rsquo;s Unitree G1 reference, from the same world body, tracked by the same released tracker (SONIC, G1 mode) in one MuJoCo setup. Ours, points / mesh: FAB-Retarget in points / mesh mode, on the dense points and the SMPL fitted to them / on the fitted SMPL alone. GMR: input turned to face the robot&rsquo;s initial heading at frame&nbsp;0. Silver: the tracked G1; blue: the method&rsquo;s kinematic reference, drawn at the robot&rsquo;s position. <b>bone err</b> is the running mean of the G1&rsquo;s bone-direction error against the real person up to its first fall; <b>root lag</b> is the current horizontal distance between the robot&rsquo;s root and its reference root; the red badge marks a fall. Left: the input with FAB-L&rsquo;s dense points and the mesh fitted to them, and the video contact model&rsquo;s feet on the ground.</p>
+  <p class="note">Clips picked by rule: the largest, median and smallest gain of Ours, mesh over Fast SAM 3D Body (SONIC-G1 bone-direction error) over the 12 trackable test clips; all three are EMDB clips. More EMDB clips in the other tabs.</p>
+  <p class="note">From one video to a humanoid: in-the-wild Pexels clips, selected examples.</p>
+  <div style="margin-bottom: 22px;"><div class="carousel" tabindex="0" role="region" aria-roledescription="carousel" aria-label="In-the-wild humanoid clips"><div class="car-stage"><div class="car-sizer" aria-hidden="true"><div class="car-card"><div style="aspect-ratio: 1920 / 1080;"></div></div></div><div class="car-item" data-label="Pexels 8928287 (RDNE Stock project)"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/humanoid/wild_8928287_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/humanoid/wild_8928287.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="Pexels 8929214 (RDNE Stock project)"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/humanoid/wild_8929214_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/humanoid/wild_8929214.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="Pexels 8928290 (RDNE Stock project)"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/humanoid/wild_8928290_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/humanoid/wild_8928290.mp4" type="video/mp4"></video></div></div><button type="button" class="car-btn car-prev" aria-label="Previous">&lsaquo;</button><button type="button" class="car-btn car-next" aria-label="Next">&rsaquo;</button></div><div class="car-label" aria-live="polite">Pexels 8928287 (RDNE Stock project)</div></div></div>
+  <div data-tabs="[{&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P5_44_indoor_rom.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P5_44_indoor_rom_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P5_44&quot;}, {&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P5_40_indoor_walk_big_circle.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P5_40_indoor_walk_big_circle_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P5_40&quot;}, {&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P3_32_outdoor_soccer_warmup_a.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P3_32_outdoor_soccer_warmup_a_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P3_32&quot;}, {&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P5_42_indoor_dancing.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P5_42_indoor_dancing_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P5_42&quot;}, {&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P6_47_outdoor_run_slalom.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P6_47_outdoor_run_slalom_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P6_47&quot;}, {&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P6_51_outdoor_dancing.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P6_51_outdoor_dancing_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P6_51&quot;}, {&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P8_65_outdoor_walk_straight.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P8_65_outdoor_walk_straight_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P8_65&quot;}, {&quot;src&quot;: &quot;https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P3_33_outdoor_soccer_warmup_b.mp4&quot;, &quot;poster&quot;: &quot;assets/videos/retarget/emdb_P3_33_outdoor_soccer_warmup_b_poster.jpg&quot;, &quot;cap&quot;: &quot;EMDB P3_33&quot;}]"><div class="tabs"><button type="button" data-i="0" class="on">Largest gain</button><button type="button" data-i="1">Median gain</button><button type="button" data-i="2">Smallest gain</button><button type="button" data-i="3">indoor dancing</button><button type="button" data-i="4">outdoor slalom run</button><button type="button" data-i="5">outdoor dancing</button><button type="button" data-i="6">outdoor walk</button><button type="button" data-i="7">soccer warm-up (b)</button></div><figure><video controls muted playsinline loop preload="none" poster="assets/videos/retarget/emdb_P5_44_indoor_rom_poster.jpg" width="1888" height="872"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/retarget/emdb_P5_44_indoor_rom.mp4" type="video/mp4"></video><figcaption>EMDB P5_44</figcaption></figure></div>
+</section>
+
+<section id="dance">
+  <h2>Many people, one world</h2>
+  <p>Group dances from stock video: every dancer through FAB, all of them in one metric world with the scene, each retargeted to a Unitree G1 and tracked in simulation. Selected examples; robots are retargeted from the fitted bodies and tracked independently, trackers are named in each video (cheerleaders: <a href='https://arxiv.org/abs/2610.28480'>SuperMimic</a>, one tracker trained per dancer, in a world levelled by one rotation); bystander faces blurred.</p>
+  <div class="videos"><figure><video controls muted playsinline loop preload="none" poster="assets/videos/dance/cheerleaders_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/dance/cheerleaders.mp4" type="video/mp4"></video><figcaption>Pexels 7894075 (MART PRODUCTION)</figcaption></figure>
+<figure><video controls muted playsinline loop preload="none" poster="assets/videos/dance/skatepark_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/dance/skatepark.mp4" type="video/mp4"></video><figcaption>Pexels 8688883 (ANTONI SHKRABA production)</figcaption></figure></div>
+</section>
+
+<section id="egoexo">
+  <h2>Ego + exo: body and hands in one world</h2>
+  <p>One person seen by two cameras: FAB on a third-person camera, FAH-L on the camera the person wears on the head, synchronised through the head camera&rsquo;s timecode, in one world. Hands come from our companion model FAH (<a href="https://www.jinkuncao.com/FAH/">project page</a>, <a href="https://github.com/noahcao/FAH">code</a>). Robots are FAB-Retarget references (kinematic); hands are shown in the head-mounted view only; floors are not levelled; bystander faces blurred.</p>
+  <div class="carousel" tabindex="0" role="region" aria-roledescription="carousel" aria-label="Ego + exo clips"><div class="car-stage"><div class="car-sizer" aria-hidden="true"><div class="car-card"><div style="aspect-ratio: 1920 / 1080;"></div></div></div><div class="car-item" data-label="CORE4D-Real 20231002/007"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/egoexo/core4d_007_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/egoexo/core4d_007.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="CORE4D-Real 20231002/035"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/egoexo/core4d_035_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/egoexo/core4d_035.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="CORE4D-Real 20231002/017"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/egoexo/core4d_017_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/egoexo/core4d_017.mp4" type="video/mp4"></video></div></div><div class="car-item" data-label="CORE4D-Real 20231002/022"><div class="car-card"><video muted playsinline loop preload="none" poster="assets/videos/egoexo/core4d_022_poster.jpg" width="1920" height="1080"><source src="https://huggingface.co/datasets/noahcao/FAB-page/resolve/main/videos/egoexo/core4d_022.mp4" type="video/mp4"></video></div></div><button type="button" class="car-btn car-prev" aria-label="Previous">&lsaquo;</button><button type="button" class="car-btn car-next" aria-label="Next">&rsaquo;</button></div><div class="car-label" aria-live="polite">CORE4D-Real 20231002/007</div></div>
+</section>
+
+<section id="numbers">
+  <h2>Key numbers</h2>
+  <div class="highlights"><div><b>39.2 fps</b>FAB-L end to end on one RTX 4070 Ti SUPER, person detection included; SAM 3D Body&rsquo;s body-only path: 8.5 fps (4.6&times;)</div><div><b>32.7 mm</b>PA-MPJPE on 3DPW (SAM 3D Body: 33.7 mm)</div><div><b>57.1 mm</b>WA-MPJPE on EMDB-2, all 25 sequences; the best re-run world method, DuoMo: 67.5 mm</div><div><b>50.6 mm</b>WA-MPJPE on RICH-191 with ground-truth boxes, as every re-run world method but CRISP is given</div><div><b>8.9 cm</b>body to the scanned contact surfaces on RICH, placed by the ground-truth camera (VideoMimic: 23.8 cm)</div><div><b>11.8&deg;</b>G1 reference bone-direction error, FAB-Retarget [skeleton + mesh + points] (GMR: 14.7&deg;)</div></div>
+<p class="note">From the paper&rsquo;s tables, cell by cell; our rows shaded, bold: best.</p>
+<h3>Camera space</h3><div class="table-wrap"><table>
+<thead>
+<tr class="group"><th></th><th colspan=2>3DPW</th><th colspan=2>RICH</th><th></th></tr>
+<tr><th>Method</th><th>PA</th><th>MPJPE</th><th>PA</th><th>MPJPE</th><th>fps</th></tr>
+</thead><tbody>
+<tr><td>TRAM</td><td>36.4&dagger;</td><td>58.8</td><td>40.0</td><td>68.7</td><td>1.0</td></tr>
+<tr><td>GVHMR</td><td>38.4&loz;&dagger;</td><td>58.2&loz;</td><td>38.0</td><td>66.6</td><td>9.2</td></tr>
+<tr><td>GEM-X (GENMO)</td><td>37.6</td><td>59.8</td><td>35.3</td><td>56.4</td><td>2.0</td></tr>
+<tr><td>WHAM</td><td>38.3&dagger;</td><td>63.8</td><td>42.2</td><td>77.9</td><td>2.8</td></tr>
+<tr><td>DuoMo</td><td>36.7&dagger;</td><td>59.4</td><td>35.0</td><td>49.5</td><td>1.1&Vert;</td></tr>
+<tr><td>SAM 3D Body</td><td>33.7&dagger;</td><td>55.1</td><td>31.3</td><td>50.0</td><td>8.5&Dagger;</td></tr>
+<tr><td>Fast SAM 3D Body</td><td>34.1&dagger;</td><td>55.5</td><td>31.4</td><td>49.8</td><td>6.7</td></tr>
+<tr><td>NLF-L</td><td>35.7&dagger;</td><td>57.7</td><td>28.1&dagger;</td><td><b>45.3</b></td><td>10.8</td></tr>
+<tr><td>PromptHMR</td><td>37.1&dagger;</td><td>59.1</td><td>37.1</td><td>54.5</td><td>7.9</td></tr>
+<tr class="ours"><td>FAB-H, MHR mesh &rarr; SMPL, official</td><td><b>32.4&dagger;</b></td><td><b>52.7</b></td><td>27.9&dagger;</td><td>46.0</td><td>0.12</td></tr>
+<tr class="ours"><td>FAB-H, MHR mesh &rarr; SMPL, our fit</td><td>33.1&dagger;</td><td>53.2</td><td>28.2&dagger;</td><td>45.6</td><td>24.9</td></tr>
+<tr class="ours"><td>FAB-H, dense points &rarr; SMPL</td><td>33.7&dagger;</td><td>54.8</td><td>29.8&dagger;</td><td>48.2</td><td>21.8</td></tr>
+<tr class="ours"><td>FAB-L (ours)</td><td>32.7&dagger;</td><td>53.1</td><td><b>27.8&dagger;</b></td><td>45.5</td><td>39.2</td></tr>
+<tr class="ours"><td>FAB-S (ours)</td><td>37.7&dagger;</td><td>59.8</td><td>35.4&dagger;</td><td>56.4</td><td><b>63.8</b></td></tr>
+</tbody></table></div>
+<p class="note">Camera space, re-run by us under the standard protocol on the same frames (mm; PA: PA-MPJPE; 3DPW: 14 H36M joints; RICH test: 24 SMPL joints). FAB-L / FAB-S: SMPL fitted to their dense points; FAB-H is also reported with its MHR mesh converted to SMPL, by our fit and by MHR&rsquo;s official converter (official). Bold: best per column; shaded: ours (also in the other tables). fps: end to end on one RTX 4070 Ti SUPER. &dagger;Trains on this benchmark&rsquo;s training split (NLF-L on RICH: split unstated). &loz;Flip test-time augmentation. &Dagger;Body-only mode, eager PyTorch. &Vert;Exceeds the card&rsquo;s 16&nbsp;GiB.</p>
+<h3>World space</h3><div class="table-wrap"><table>
+<thead>
+<tr class="group"><th></th><th></th><th colspan=6>EMDB-2 (25 sequences)</th><th colspan=4>RICH-191</th></tr>
+<tr><th>Method</th><th>Box</th><th>Cam.</th><th>WA</th><th>W</th><th>RTE</th><th>J</th><th>FS</th><th>Cam.</th><th>WA</th><th>W</th><th>RTE</th></tr>
+</thead><tbody>
+<tr><td>TRAM</td><td>GT</td><td>GT K, SLAM</td><td>93.3</td><td>328.3</td><td>3.20</td><td>18.6</td><td>13.9</td><td>GT K, static</td><td>95.9</td><td>154.5</td><td>2.24</td></tr>
+<tr><td>GVHMR</td><td>GT</td><td>est. K, DPVO</td><td>109.1</td><td>272.8</td><td>1.90</td><td>16.1</td><td><b>3.4</b></td><td>GT K, static</td><td>77.1</td><td>125.1</td><td>2.34</td></tr>
+<tr><td>GEM-X (GENMO)</td><td>GT</td><td>GT K, GT R</td><td>114.2</td><td>270.9</td><td>2.54</td><td>35.3</td><td>4.3</td><td>GT K, GT R</td><td>79.3</td><td>128.5</td><td>2.58</td></tr>
+<tr><td>WHAM</td><td>GT*</td><td>FOV, GT R</td><td>148.8</td><td>384.5</td><td>4.63</td><td>22.0</td><td>5.9</td><td>FOV, static</td><td>117.5</td><td>201.9</td><td>5.06</td></tr>
+<tr><td>DuoMo</td><td>GT</td><td>GT K, TRAM SLAM</td><td>67.5</td><td>167.9</td><td>1.19</td><td>9.5</td><td>3.9</td><td>GT K, static</td><td>55.6</td><td>83.4</td><td>1.70</td></tr>
+<tr><td>CRISP&sect; (human&ndash;scene)</td><td>own</td><td>MegaSaM</td><td>74.7</td><td>208.7</td><td>1.46</td><td>53.6</td><td>12.4</td><td>MegaSaM</td><td>91.7</td><td>158.1</td><td>3.37</td></tr>
+<tr><td>SAM 3D Body</td><td></td><td></td><td>56.0</td><td><b>141.0</b></td><td>1.06</td><td>5.2</td><td>6.3</td><td></td><td>73.9</td><td>144.0</td><td>5.67</td></tr>
+<tr><td>Fast SAM 3D Body</td><td></td><td></td><td>56.3</td><td>141.1</td><td>1.06</td><td>5.3</td><td>6.4</td><td></td><td>74.4</td><td>145.4</td><td>5.70</td></tr>
+<tr><td>NLF-L</td><td></td><td></td><td>60.4</td><td>151.8</td><td>1.14</td><td>5.7</td><td>6.9</td><td></td><td>69.7&dagger;</td><td>137.2</td><td>5.72</td></tr>
+<tr class="ours"><td>FAB-H, MHR mesh &rarr; SMPL</td><td></td><td></td><td><b>55.4</b></td><td>142.5</td><td>1.09</td><td>5.2</td><td>6.2</td><td></td><td>68.8&dagger;</td><td>135.5</td><td>5.75</td></tr>
+<tr class="ours"><td>FAB-H, dense points &rarr; SMPL</td><td></td><td></td><td>59.0</td><td>147.3</td><td>1.04</td><td>5.5</td><td>7.7</td><td></td><td>75.6&dagger;</td><td>150.2</td><td>6.01</td></tr>
+<tr class="ours"><td>FAB-L (ours)</td><td></td><td></td><td>57.1</td><td>147.2</td><td>1.06</td><td>5.3</td><td>6.8</td><td></td><td>65.9&dagger;</td><td>132.2</td><td>5.73</td></tr>
+<tr class="ours"><td>FAB-S (ours)</td><td></td><td></td><td>61.9</td><td>163.8</td><td>1.13</td><td>5.8</td><td>8.6</td><td></td><td>80.1&dagger;</td><td>155.2</td><td>5.93</td></tr>
+<tr class="ours"><td>FAB-L: ViPE camera at its own scale, smoothed</td><td>ours</td><td>ViPE scale</td><td>60.9</td><td>170.4</td><td>1.55</td><td>4.7</td><td>7.6</td><td>ours</td><td>65.9&dagger;</td><td>132.2</td><td>5.73</td></tr>
+<tr class="ours"><td>FAB-L, ground-truth camera motion</td><td>ours</td><td>ours K, GT motion</td><td>51.0</td><td>137.9</td><td>0.19</td><td>4.0</td><td>6.8</td><td>ours K, GT motion</td><td>65.9&dagger;</td><td>132.5</td><td>5.73</td></tr>
+<tr class="ours"><td>FAB-L (ours), ground-truth boxes</td><td>GT</td><td>ours</td><td>55.7</td><td>143.0</td><td><b>1.03</b></td><td><b>5.1</b></td><td>6.2</td><td>ours</td><td><b>50.6&dagger;</b></td><td><b>77.4</b></td><td><b>1.16</b></td></tr>
+</tbody></table></div>
+<p class="note">World space on the same frames: EMDB-2 (all 25 sequences) and RICH-191. Top: world methods with their released code and own inputs. Middle: per-frame bodies through our world pipeline, with the same cameras, boxes and contacts. Bottom: before the joint human&ndash;scene step, and with the ground-truth camera motion; last row: FAB-L with the ground-truth boxes. WA / W: WA- / W-MPJPE (mm); RTE (%); jerk J (10&nbsp;m&nbsp;s<sup>-3</sup>); foot sliding FS (mm). Box: GT, ours (our detector) or own (its masks). Cam.: intrinsics K (FOV: fixed field of view) and camera motion (own SLAM / DPVO / MegaSaM, GT rotation R, or static); ours: our focal rule and ViPE. Bold: best in the top and middle blocks and the last row. *RICH-191: box from WHAM&rsquo;s ViTPose keypoints in the GT box. &sect;Overlapping 600-frame chunks. &dagger;Trains on RICH&rsquo;s training split (NLF-L: split unstated).</p>
+<h3>Foot contact</h3><div class="table-wrap"><table>
+<thead>
+<tr class="group"><th></th><th colspan=2>static</th><th>mat</th><th>HSC</th></tr>
+<tr><th>Method</th><th>EMDB-2</th><th>RICH</th><th>MOYO</th><th>RICH</th></tr>
+</thead><tbody>
+<tr><td>keypoint height / speed rule</td><td>0.46</td><td>0.62</td><td>0.55</td><td>0.65</td></tr>
+<tr><td>WHAM (released code)</td><td>0.63</td><td>0.87</td><td>0.66</td><td>0.91</td></tr>
+<tr><td>GVHMR (released code)</td><td><b>0.71</b></td><td><b>0.89</b></td><td>0.61</td><td>0.90</td></tr>
+<tr class="ours"><td>ours, image head</td><td>0.67</td><td>0.88</td><td><b>0.89</b></td><td><b>0.97</b></td></tr>
+<tr class="ours"><td>ours, causal video model (world frame)</td><td>0.69</td><td><b>0.89</b></td><td>0.87</td><td><b>0.97</b></td></tr>
+</tbody></table></div>
+<p class="note">Foot contact F1 against three label sets. Static: world-fixed contact from the ground-truth world motion; mat: MOYO&rsquo;s measured pressure mat; HSC: any contact against RICH&rsquo;s human&ndash;scene contact annotations; all on validation splits, which share subjects with training. WHAM and GVHMR output only static contact, scored against every label set.</p>
+<h3>Scenes</h3><div class="table-wrap"><table>
+<thead>
+<tr class="group"><th></th><th colspan=9>scene geometry</th><th colspan=5>human in the scene&rsquo;s world</th><th colspan=6>human&ndash;scene contact</th></tr>
+<tr class="group"><th></th><th colspan=2>RICH-3</th><th colspan=3>EgoBody</th><th>SLOPER4D</th><th colspan=3>PROX</th><th colspan=3>SLOPER4D</th><th colspan=2>EMDB P3_30</th><th colspan=4>RICH-3&para;</th><th colspan=2>VideoMimic (123), G1</th></tr>
+<tr><th>Method</th><th>rigid</th><th>Sim(3)</th><th>rigid</th><th>Sim(3)</th><th>ATE</th><th>scene</th><th>1-way</th><th>2-way</th><th>non-pen.&uarr;</th><th>WA</th><th>W</th><th>RTE</th><th>WA</th><th>W</th><th>pen.</th><th>float</th><th>|s|</th><th>feet</th><th>pen. &gt;2&nbsp;cm</th><th>gap</th></tr>
+</thead><tbody>
+<tr><td>VideoMimic</td><td>18.4</td><td>11.7</td><td>10.9</td><td>7.6</td><td>3.0</td><td><b>49.8</b></td><td>24.6</td><td>31.0</td><td>84.8</td><td>35.7</td><td>73.8</td><td>11.4</td><td>10.8</td><td>36.5</td><td>10.2</td><td>13.6</td><td>23.8</td><td><b>4.3</b></td><td>57.2</td><td>5.0</td></tr>
+<tr><td>CRISP</td><td>8.1</td><td><b>6.9</b></td><td><b>7.6</b></td><td><b>6.1</b></td><td>2.4</td><td>75.8&sect;</td><td><b>18.6</b></td><td>27.3</td><td>76.0</td><td>18.1&sect;</td><td>67.2&sect;</td><td>3.6&sect;</td><td>6.4&sect;</td><td>14.9&sect;</td><td>7.5</td><td>11.6</td><td>19.2</td><td>6.5</td><td>0.8&Dagger;</td><td><b>1.9&Dagger;</b></td></tr>
+<tr><td>JOSH</td><td>25.3</td><td>15.2</td><td>22.2</td><td>6.9</td><td>9.9</td><td>264.6</td><td>74.5</td><td>44.2</td><td>87.3</td><td>22.2</td><td>77.7</td><td>4.6</td><td>40.8</td><td>83.2</td><td>4.9</td><td><b>4.1</b></td><td>9.0</td><td>35.4</td><td>0.7&Dagger;</td><td>2.6&Dagger;</td></tr>
+<tr class="ours"><td>FAB-L (ours)&dagger;</td><td><b>8.0</b></td><td>7.5</td><td>12.5</td><td>9.4</td><td><b>2.2</b></td><td>94.4</td><td>21.3</td><td><b>17.8</b></td><td><b>92.0</b></td><td><b>10.6</b></td><td><b>40.8</b></td><td><b>1.1</b></td><td><b>5.9</b></td><td><b>14.3</b></td><td><b>3.5</b></td><td>5.4</td><td><b>8.9</b></td><td>4.8**</td><td><b>0.6</b></td><td>2.5</td></tr>
+</tbody></table></div>
+<p class="note">Scenes against three released pipelines, run by us on the same videos, under VideoMimic&rsquo;s protocols where it has them; one measure per column, grouped by dataset. Units: cm, except non-pen., RTE and pen. >2&nbsp;cm (%); lower is better except non-pen. &sect;Overlapping 600-frame chunks. **After the joint human&ndash;scene step (10.5 before it). &para;pen. / float / |s|: camera-frame bodies placed in the scan by the ground-truth camera. &dagger;Trains on RICH&rsquo;s and EgoBody&rsquo;s training splits. &Dagger;CRISP / JOSH: bodies and scenes through FAB-Retarget&rsquo;s mesh mode, as ours; JOSH, which outputs no gravity, uses ours.</p>
+<h3>Humanoid</h3><div class="table-wrap"><table>
+<thead>
+<tr class="group"><th></th><th colspan=2>reference</th><th>tracked</th></tr>
+<tr><th>Reference</th><th>bone</th><th>slip</th><th>falls, bone</th></tr>
+</thead><tbody>
+<tr><td>SOMA</td><td>15.5</td><td>0.28</td><td>5, 23.4</td></tr>
+<tr><td>GMR</td><td>14.7</td><td>0.26</td><td>5, 19.6</td></tr>
+<tr><td>UMR</td><td>18.2</td><td>0.39</td><td>5, 24.9</td></tr>
+<tr><td>OmniRetarget</td><td>21.7</td><td>0.31</td><td>8, 27.4</td></tr>
+<tr><td>sequence IK</td><td>24.3</td><td>0.22</td><td>6, 25.8</td></tr>
+<tr><td>Fast SAM 3D Body</td><td>25.5</td><td>0.39</td><td>6, 27.6</td></tr>
+<tr class="ours"><td>FAB-L G1 head (per frame)</td><td>14.5</td><td>0.38</td><td>5, 20.4</td></tr>
+<tr class="ours"><td>FAB-Retarget [skeleton]</td><td>11.7</td><td>0.12</td><td>5, 19.2</td></tr>
+<tr class="ours"><td>FAB-Retarget [skeleton + mesh]</td><td><b>11.6</b></td><td><b>0.11</b></td><td>6, 20.0</td></tr>
+<tr class="ours"><td>FAB-Retarget [skeleton + mesh + points]</td><td>11.8</td><td>0.13</td><td><b>4, 18.3</b></td></tr>
+</tbody></table></div>
+<p class="note">G1 references on 25 flat-floor test clips, tracked by SONIC (G1 mode) in one MuJoCo setup, all from the world pipeline&rsquo;s body. Reference: bone-direction error (&deg;) and sole slip (m&nbsp;s<sup>-1</sup>); tracked: falls of 25, bone-direction error before the first fall. FAB-L G1 head (per frame): the in-model G1 head; FAB-Retarget [skeleton] / [skeleton + mesh] / [skeleton + mesh + points]: its skeleton / mesh / points mode, pinned in one batch; Fast SAM 3D Body: its own SMPL through our sequence IK.</p>
+</section>
+
+<section id="bibtex">
+  <h2>BibTeX</h2>
+  <div class="bib">
+    <button type="button" id="copy-bib">Copy</button>
+<pre id="bib-text">@misc{fab2026,
+  title         = {Fast and Accurate Body Estimation in Pixels, World Space and Scenes},
+  author        = {Cao, Jinkun},
+  year          = {2026},
+  eprint        = {2611.25801},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV},
+  url           = {https://arxiv.org/abs/2611.25801}
+}</pre>
+  </div>
+  
+</section>
+
+<section id="credits">
+  <h2>Credits</h2>
+  <ul class="credits-list">
+    <li>EMDB (Kaufmann et al., ICCV 2023): frames and ground truth of the method figure and of the camera-space, world, scene and humanoid videos, used under its licence for non-commercial research. Bystander faces blurred.</li>
+    <li>RICH (Huang et al., CVPR 2022): frames and scans of the world comparisons, used under its licence for non-commercial research. Bystander faces blurred.</li>
+    <li>EgoBody (Zhang et al., ECCV 2022): frames of the egocentric world clip, used under its licence for non-commercial research.</li>
+    <li>Body models: SMPL (Loper et al., 2015) and MHR. Baselines: SAM 3D Body, Fast SAM 3D Body, GVHMR, DuoMo, VideoMimic, CRISP, JOSH, GMR, UMR, OmniRetarget and SOMA, each run by us with its released code and models; the world comparisons show the same baseline runs as the paper&rsquo;s world-space numbers.</li>
+    <li>Dances, Pexels clips under the Pexels License: &ldquo;<a href="https://www.pexels.com/video/cheerleaders-performing-7894075/">Cheerleaders performing</a>&rdquo; by MART PRODUCTION; <a href="https://www.pexels.com/video/a-sexy-woman-dancing-in-the-middle-8688883/">Pexels video 8688883</a> by ANTONI SHKRABA production; &ldquo;<a href="https://www.pexels.com/video/woman-dancing-in-the-street-8928287/">Woman dancing in the street</a>&rdquo; by RDNE Stock project (humanoid); &ldquo;<a href="https://www.pexels.com/video/woman-dancing-on-the-street-8929214/">Woman dancing on the street</a>&rdquo; by RDNE Stock project (humanoid); &ldquo;<a href="https://www.pexels.com/video/person-dancing-on-street-8928290/">Person dancing on street</a>&rdquo; by RDNE Stock project (humanoid). Overlays and renders added by us.</li>
+    <li>Ego + exo: CORE4D-Real (Liu et al., CVPR 2025), <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>; participants&rsquo; faces blurred by CORE4D, other heads blurred by us. Overlays and renders added by us; each clip is under its dataset&rsquo;s licence.</li>
+    <li>Unitree G1: the robot model is Unitree Robotics&rsquo; G1 description (unitree_ros, BSD 3-Clause). Tracking in simulation: SONIC (G1 mode), its released policy, in MuJoCo.</li>
+    <li>Teaser, Pexels clips under the <a href="https://www.pexels.com/license/">Pexels License</a>: &ldquo;<a href="https://www.pexels.com/video/people-dancing-at-a-skate-park-8688452/">People dancing at a skate park</a>&rdquo; by Antoni Shkraba; &ldquo;<a href="https://www.pexels.com/video/woman-dancing-on-the-street-8929214/">Woman dancing on the street</a>&rdquo;, &ldquo;<a href="https://www.pexels.com/video/woman-dancing-in-the-street-8928287/">Woman dancing in the street</a>&rdquo; and &ldquo;<a href="https://www.pexels.com/video/person-dancing-on-street-8928290/">Person dancing on street</a>&rdquo; by RDNE Stock project; &ldquo;<a href="https://www.pexels.com/video/cheerleaders-performing-7894075/">Cheerleaders performing</a>&rdquo; by MART PRODUCTION; &ldquo;<a href="https://www.pexels.com/video/man-breakdancing-at-the-court-6548150/">Man breakdancing at the court</a>&rdquo; by Marc Espejo; &ldquo;<a href="https://www.pexels.com/video/businessman-in-full-suit-walking-up-the-stairs-9613985/">Businessman in full suit walking up the stairs</a>&rdquo; by Lara Jameson. Photos (Wikimedia Commons, <a href="https://creativecommons.org/licenses/by/2.0/">CC BY 2.0</a>): &ldquo;<a href="https://commons.wikimedia.org/wiki/File:Two_women_jogging_in_Skinner_Butte_Park.jpg">Two women jogging in Skinner Butte Park</a>&rdquo; by Rick Obst; &ldquo;<a href="https://commons.wikimedia.org/wiki/File:Skateboarder_on_the_South_Bank.jpg">Skateboarder on the South Bank</a>&rdquo; by Ashley Van Haeften. Egocentric hands: HoloAssist (Wang et al., ICCV 2023; CDLA-Permissive-2.0) and Egocentric-10K (Build AI, 2025; Apache-2.0). EMDB frames as above. Overlays added by us; each clip is under its source&rsquo;s licence. Type: Inter (SIL Open Font License 1.1).</li>
+    <li>Built with DINOv3.</li>
+  </ul>
+</section>
+
+<footer>FAB: Fast and Accurate Body Estimation in Pixels, World Space and Scenes.</footer>
+</main>
+<script>
+document.querySelectorAll('[data-tabs]').forEach(function (box) {
+  var items = JSON.parse(box.getAttribute('data-tabs'));
+  var v = box.querySelector('video'), cap = box.querySelector('figcaption');
+  box.querySelectorAll('.tabs button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var it = items[+b.dataset.i];
+      box.querySelectorAll('.tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      v.poster = it.poster; v.innerHTML = '<source src="' + it.src + '" type="video/mp4">'; v.load(); v.play();
+      cap.innerHTML = it.cap;
+    });
+  });
+});
+document.querySelectorAll('.carousel').forEach(function (car) {
+  var items = Array.prototype.slice.call(car.querySelectorAll('.car-item')), n = items.length, cur = 0, seen = false;
+  var label = car.querySelector('.car-label');
+  function v(i) { return items[i].querySelector('video'); }
+  function playCentre() { var p = v(cur).play(); if (p && p.catch) p.catch(function () {}); }
+  function show(k) {
+    cur = ((k % n) + n) % n;
+    items.forEach(function (it, i) {
+      var o = (i - cur + n) % n; if (o > n / 2) o -= n;
+      var a = Math.abs(o), s = o === 0 ? 1 : (a === 1 ? 0.86 : 0.8);
+      it.style.transform = 'translateX(' + (100 * o - 50) + '%) scale(' + s + ')';
+      it.style.opacity = o === 0 ? 1 : (a === 1 ? 0.4 : 0);
+      it.style.pointerEvents = a > 1 ? 'none' : '';
+      it.classList.toggle('c', o === 0);
+      it.setAttribute('aria-hidden', o === 0 ? 'false' : 'true');
+      var x = v(i);
+      if (o === 0) { x.controls = true; if (x.preload === 'none') x.preload = 'metadata'; }
+      else { x.controls = false; if (!x.paused) x.pause(); if (x.currentTime) { try { x.currentTime = 0; } catch (e) {} } }
+    });
+    label.textContent = items[cur].getAttribute('data-label');
+    if (seen) playCentre();
+  }
+  car.querySelector('.car-prev').addEventListener('click', function () { show(cur - 1); });
+  car.querySelector('.car-next').addEventListener('click', function () { show(cur + 1); });
+  items.forEach(function (it, i) { it.addEventListener('click', function () { if (i !== cur) show(i); }); });
+  car.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); show(cur + (e.key === 'ArrowLeft' ? -1 : 1)); }
+  }, true);
+  var x0 = null, st = car.querySelector('.car-stage');
+  st.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
+  st.addEventListener('touchend', function (e) {
+    if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 40) show(cur + (dx < 0 ? 1 : -1));
+  });
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (es) {
+      seen = es[0].isIntersecting;
+      if (seen) playCentre(); else if (!v(cur).paused) v(cur).pause();
+    }, { threshold: 0.5 }).observe(st);
+  }
+  show(0);
+});
+var cb = document.getElementById('copy-bib');
+if (cb) cb.addEventListener('click', function () {
+  navigator.clipboard.writeText(document.getElementById('bib-text').textContent).then(function () {
+    cb.textContent = 'Copied'; setTimeout(function () { cb.textContent = 'Copy'; }, 1500);
+  });
+});
+</script>
+</body>
+</html>
