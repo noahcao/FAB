@@ -314,14 +314,27 @@ class Floor(unittest.TestCase):
         frames = [{"contact_best": np.zeros(16)} for _ in range(3)]
         frames[0]["contact_best"][6] = 0.8  # frame 0: l_knee on the floor
         frames[2]["contact_best"][6] = 0.4  # frame 2: below the threshold
-        s2, j2, n = mv.floor_contacts(frames, np.ones(3, bool), surf, j14, vis_idx, [((6,), 1)], 0.0)
+        s2, j2, n = mv.floor_contacts(frames, np.ones(3, bool), surf, j14, vis_idx, [((6,), 1, "hold")], 0.0)
         self.assertEqual(n, 1)
         self.assertAlmostEqual(s2[0, knee, 2].min(), 0.0)
         self.assertTrue(np.allclose(s2[0, ~knee], surf[0, ~knee]) and np.allclose(s2[1:], surf[1:]))
         self.assertAlmostEqual(j2[0, 1, 2], -surf[0, knee, 2].min())
         far = surf.copy()
         far[0, knee, 2] += 0.5  # 58-70 cm up: more than the cap, left as it is
-        self.assertEqual(mv.floor_contacts(frames, np.ones(3, bool), far, j14, vis_idx, [((6,), 1)], 0.0)[2], 0)
+        self.assertEqual(mv.floor_contacts(frames, np.ones(3, bool), far, j14, vis_idx, [((6,), 1, "hold")], 0.0)[2], 0)
+
+    def test_feet_only_lifted(self):
+        rng = np.random.default_rng(11)
+        vis_idx = rng.integers(70, 84, 468)
+        foot = vis_idx - 70 == 0
+        surf = np.zeros((2, 468, 3))
+        surf[0, foot, 2] = rng.uniform(0.04, 0.1, foot.sum())  # frame 0: 4-10 cm above the floor (soles): left alone
+        surf[1, foot, 2] = rng.uniform(-0.05, 0.1, foot.sum())  # frame 1: 5 cm into it: raised onto it
+        frames = [{"contact_best": np.ones(16)} for _ in range(2)]
+        s2, _, n = mv.floor_contacts(frames, np.ones(2, bool), surf, np.zeros((2, 14, 3)), vis_idx, [((), 0, "lift")], 0.0)
+        self.assertEqual(n, 1)
+        self.assertTrue(np.allclose(s2[0], surf[0]))
+        self.assertAlmostEqual(s2[1, foot, 2].min(), 0.0)
 
 
 class SingleViewUnchanged(unittest.TestCase):

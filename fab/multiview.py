@@ -17,8 +17,9 @@ Steps (one rule each):
              residual of its nearest joint (on the SMPL template); then each of the 468 dense points and 14 joints is the
              robust (Geman-McClure, 5 cm) weighted mean over the views, weight = the P(visible) of the point's nearest
              joint (at least 0.05); a triangulated joint keeps its triangulated position.
-  5. floor   with the rig's floor_z: a knee or foot the image contact head puts on the floor (static contact >= 0.5 in the
-             view that sees it best) has its fused points moved vertically onto the floor (within 20 cm).
+  5. floor   with the rig's floor_z (else off): a knee or hand the image contact head puts on the floor (static contact
+             >= 0.5 in the view that sees it best) has its fused points moved vertically onto the floor; a foot below
+             the floor is raised onto it, never pulled down (shoes); both within 20 cm.
   6. fit     one SMPL fit per frame to the fused points: the released one-pass fitter, two Gauss-Newton steps (the
              release's FastGN, Geman-McClure 50 mm, per-point weights = the fused confidence), then the clip's median
              betas and two more steps with the shape fixed; the release's world smoothing (rotations sigma 2, pelvis
@@ -486,31 +487,34 @@ def track_and_fuse(views, people, vis_idx, boxes=None):
 
 
 def contact_parts(j14_reg, body):
-    """[(contact channels, joint index in the 14)] for the left / right knee and foot: the joints nearest the SMPL knees
-    and ankles on the template; channels l_knee, r_knee, (l_heel, l_toe), (r_heel, r_toe)."""
+    """[(contact channels, joint index in the 14, rule)] for the support parts: knees and hands are held at the floor when
+    in contact ("hold"), feet are only kept from going below it ("lift": shoes add their soles). The joints are the ones
+    nearest the SMPL knees, wrists and ankles on the template; channels l_knee, r_knee, l_hand, r_hand, (feet: none)."""
     tmpl = body.v_template.cpu().numpy().astype(np.float64)
     J = body.J_regressor.cpu().numpy().astype(np.float64) @ tmpl
     J14t = j14_reg @ tmpl
-    jidx = {k: int(np.linalg.norm(J14t - J[k], axis=1).argmin()) for k in (4, 5, 7, 8)}
-    return [((6,), jidx[4]), ((7,), jidx[5]), ((0, 1), jidx[7]), ((2, 3), jidx[8])]
+    jidx = {k: int(np.linalg.norm(J14t - J[k], axis=1).argmin()) for k in (4, 5, 7, 8, 20, 21)}
+    return [((6,), jidx[4], "hold"), ((7,), jidx[5], "hold"), ((4,), jidx[20], "hold"), ((5,), jidx[21], "hold"),
+            ((), jidx[7], "lift"), ((), jidx[8], "lift")]
 
 
 def floor_contacts(frames, valid, surf, j14, vis_idx, parts, floor_z, cap=CONTACT_CAP):
-    """A knee or foot (parts: contact_parts) whose static contact (the image contact head; heel or toe for a foot) is
-    >= 0.5 in the view that sees its keypoint best has its fused dense points (those nearest its joint on the template)
-    and its joint moved vertically so that their lowest point is on the floor, when that is within cap (m).
-    -> surf, j14, the number of placements."""
+    """The rig's floor on the fused points, per support part (contact_parts): a part's fused dense points are those nearest
+    its joint on the template. "hold" (knees, hands): when the part's static contact is >= 0.5 in the view that sees its
+    keypoint best, its points and joint move vertically so that their lowest point is on the floor (when within cap, m).
+    "lift" (feet): only a lowest point below the floor is raised onto it (within cap); a foot is never pulled down. The
+    fit then treats these points as any other (a soft constraint). -> surf, j14, the number of moves."""
     surf, j14 = surf.copy(), j14.copy()
     n = 0
     for t, f in enumerate(frames):
         if f is None or not valid[t]:
             continue
-        for ch, j in parts:
-            if max(f["contact_best"][list(ch)]) < 0.5:
+        for ch, j, rule in parts:
+            if rule == "hold" and max(f["contact_best"][list(ch)]) < 0.5:
                 continue
             m = vis_idx - 70 == j
             dz = floor_z - surf[t, m, 2].min()
-            if abs(dz) <= cap:
+            if abs(dz) <= cap and (rule == "hold" or dz > 0):
                 surf[t, m, 2] += dz
                 j14[t, j, 2] += dz
                 n += 1
@@ -747,7 +751,7 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
     j14_w = np.stack([np.where(np.isfinite(f["j14"]).all(1), f["j14_w"], 0.0) if v else np.zeros(14) for f, v in zip(frames, valid)])
     contact = np.stack([f["contact"] if f is not None else nan(16) for f in frames])
     n_floor = 0
-    if info["floor_z"] is not None:  # the knees and feet the model predicts on the floor, placed on the rig's floor
+    if info["floor_z"] is not None:  # the rig's floor: knees / hands in contact held on it, feet kept above it
         surf, j14, n_floor = floor_contacts(frames, valid, surf, j14, vis_idx, contact_parts(fab.j14, body), float(info["floor_z"]))
     R_fit = np.linalg.inv(views[0].T_world_cam)[:3, :3]
     R, betas, V = fit_sequence(surf, surf_w, j14, j14_w, valid, R_fit, fab.smpl_fitter_path, sidx, fab.j14, device, body)

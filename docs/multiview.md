@@ -65,9 +65,11 @@ Frames are matched to the first camera's timeline: each camera's nearest frame w
    - Each of the 468 dense points and 14 joints is the robust weighted mean over the views (Geman-McClure, 5 cm). A
      point's weight in a view is the P(visible) of its nearest joint on the SMPL template (at least 0.05). A
      triangulated joint keeps its triangulated position.
-4. **Floor contacts** (with the rig's `floor_z`): a knee or foot that the image contact head puts on the floor (static
-   contact >= 0.5 in the view that sees its keypoint best; heel or toe for a foot) has its fused points moved vertically
-   so that their lowest point is on the floor, when that is within 20 cm.
+4. **The floor** (only with the rig's `floor_z`): each support part's fused points (those nearest its joint on the SMPL
+   template) are checked against the floor, within 20 cm. A knee or hand that the image contact head puts on the floor
+   (static contact >= 0.5 in the view that sees its keypoint best) is moved vertically so that its lowest point is on the
+   floor. A foot is only kept from going below the floor, never pulled down: shoes add their soles. The fit treats the
+   moved points as any other target.
 5. **SMPL:** one fit per frame to the fused points. The released one-pass fitter runs first, then two of the release's
    Gauss-Newton steps (robust, weighted by the fused confidence). The clip's median betas follow, then two more steps
    with that shape fixed. The release's world smoothing comes last (rotations sigma 2, pelvis sigma 3 frames).
@@ -96,8 +98,8 @@ As `fab-world` ([world.md](world.md#outputs)), in the rig's world (z up, metres)
 - Views that see the person from different sides (60-120 degrees apart) triangulate best. Two cameras that both see only
   the person's back, or a joint that only one camera sees, give that view's monocular estimate for the joint.
 - The rig's world should have z up and a known floor (`up`, `floor_z`) for `fab-retarget`.
-- FAB's body is barefoot. With a given `floor_z`, planted feet are put on the floor (step 4), so with thick soles the
-  body's feet sit a sole's thickness (about 4 cm with sneakers) lower than the real feet; without `floor_z` they float by
-  that much.
+- FAB's body is barefoot: with thick soles, planted feet sit at the sole's height above the floor (about 4 cm with
+  sneakers in our tests). `fab-retarget --ground_aware` holds planted feet on the floor with the fused contact
+  probabilities.
 - With two views, a joint whose 2D is wrong along the epipolar line in one view (e.g. a knee hidden behind the hands)
   still triangulates consistently and cannot be detected; a third camera removes this.
