@@ -79,6 +79,28 @@ Frames are matched to the first camera's timeline: each camera's nearest frame w
 With one camera there is nothing to fuse: the output is the release's own single-view result (FAB's per-frame SMPL fit,
 mapped into the world by the camera's `T_world_cam`, the clip's median betas and the release's world smoothing).
 
+## More cameras
+
+Error against ground truth as cameras are added, on public multi-view datasets (fab-multiview at its defaults: FAB-L,
+eager). For each number of cameras k: up to 10 random k-subsets of a sequence's cameras (all of them when there are
+fewer), averaged per sequence and then over sequences. k = 1 is the release's single-view result placed with the
+calibration. Joints: FAB's 14 evaluation joints (the H36M regressor) on the predicted and the ground-truth SMPL meshes;
+MPJPE root-aligned at the mid-hip, W-MPJPE in the dataset's world without any alignment.
+
+![MPJPE and world MPJPE against the number of cameras](assets/multiview_cameras.png)
+
+| dataset | cameras used | MPJPE, k = 1 / 2 / 3 / 4 / all (mm) | W-MPJPE, k = 1 / 2 / 3 / 4 / all (mm) |
+|---|---|---|---|
+| RICH test, 6 sequences, 30 fps | 4 | 59.3 / 28.9 / 25.5 / 24.2 / 24.2 | 514 / 32.8 / 26.7 / 25.2 / 25.2 |
+| MOYO val, 9 sequences, 3 fps | 8 | 47.1 / 25.6 / 23.9 / 23.1 / 21.4 | 294 / 29.4 / 27.8 / 26.7 / 25.2 |
+
+- One camera recovers the pose well but not its place: the world error is the monocular depth error, up to metres for
+  people far from the camera. A second camera removes most of it.
+- Two cameras facing each other (about 180 degrees apart) triangulate poorly: MOYO's most-spread pair gives 56.9 mm
+  MPJPE against 25.6 mm for random pairs. Cameras 60-120 degrees apart work best.
+- Ground truth: RICH's SMPL-X fits mapped to SMPL topology with MHR's public SMPL-X -> MHR -> SMPL maps; MOYO's SMPL
+  fits. RICH's floor comes from a plane fit to the scene scan; MOYO's frames are its released every-10th-frame set.
+
 ## Outputs
 
 As `fab-world` ([world.md](world.md#outputs)), in the rig's world (z up, metres):
