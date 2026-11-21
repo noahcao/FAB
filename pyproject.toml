@@ -29,6 +29,7 @@ engine = ["tensorrt-cu12==11.4.0.106", "tensorrt-cu12-bindings==11.4.0.106", "te
 fab = "fab.cli:main"
 fab-video = "fab.video:main"
 fab-world = "fab.entry:world"
+fab-multiview = "fab.multiview:main"
 fab-retarget = "fab.entry:retarget"
 fab-retarget-ee = "fab.entry:retarget_ee"
 fab-build-trt = "fab.entry:build_trt"
