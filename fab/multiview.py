@@ -23,7 +23,7 @@ Steps (one rule each):
   6. fit     one SMPL fit per frame to the fused points: the released one-pass fitter, two Gauss-Newton steps (the
              release's FastGN, Geman-McClure 50 mm, per-point weights = the fused confidence), then the clip's median
              betas and two more steps with the shape fixed; the release's world smoothing (rotations sigma 2, pelvis
-             sigma 3 frames).
+             sigma 3 frames at 30 fps: 67 / 100 ms at any rate).
   7. export  fab-world's layout in the rig's world (z up; a flat floor at floor_z), so fab-retarget runs on it unchanged.
 With one camera (--views of one), the output is the release's own single-view result: its per-frame SMPL fit mapped by
 T_world_cam, the clip's median betas, the release's world smoothing (single_view_body + world_body).
@@ -600,7 +600,8 @@ def fit_sequence(surf, surf_w, j14, j14_w, valid, R_fit, fitter_path, surface_id
 def world_body(R, verts, betas, valid, fps, body, sigma_rot=2.0, sigma_pos=3.0):
     """The release's world smoothing (bench/videomimic/recon.py stage_world): frames without a body interpolated,
     joint rotations (global and body apart) and the pelvis Gaussian-smoothed (zero phase), the body re-posed with the
-    clip's betas. -> pose (T, 72) axis-angle, trans (T, 3), joints (T, 24, 3), verts (T, 6890, 3)."""
+    clip's betas. The sigmas are the release's frames at 30 fps, i.e. sigma x fps / 30 frames at another rate (the same
+    time span: 67 / 100 ms). -> pose (T, 72) axis-angle, trans (T, 3), joints (T, 24, 3), verts (T, 6890, 3)."""
     import torch
     from scipy.ndimage import gaussian_filter1d
     from scipy.spatial.transform import Rotation
@@ -613,6 +614,8 @@ def world_body(R, verts, betas, valid, fps, body, sigma_rot=2.0, sigma_pos=3.0):
     pel = np.einsum("v,nvc->nc", Jreg[0], verts)
     q = Rotation.from_matrix(R.reshape(-1, 3, 3)).as_quat().reshape(T, 24, 4)
     q = fill_invalid(smooth_quats(q, 0), valid)
+    if fps != 30.0:  # the same time span at another frame rate
+        sigma_rot, sigma_pos = sigma_rot * fps / 30.0, sigma_pos * fps / 30.0
     q = np.concatenate([smooth_quats(q[:, :1], sigma_rot), smooth_quats(q[:, 1:], sigma_rot)], 1)
     pel = gaussian_filter1d(fill_invalid(pel, valid), sigma_pos, axis=0, mode="nearest")
     Rs = Rotation.from_quat(q.reshape(-1, 4)).as_matrix().reshape(T, 24, 3, 3)

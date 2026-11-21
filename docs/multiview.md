@@ -72,7 +72,7 @@ Frames are matched to the first camera's timeline: each camera's nearest frame w
    moved points as any other target.
 5. **SMPL:** one fit per frame to the fused points. The released one-pass fitter runs first, then two of the release's
    Gauss-Newton steps (robust, weighted by the fused confidence). The clip's median betas follow, then two more steps
-   with that shape fixed. The release's world smoothing comes last (rotations sigma 2, pelvis sigma 3 frames).
+   with that shape fixed. The release's world smoothing comes last (rotations sigma 2, pelvis sigma 3 frames at 30 fps, i.e. 67 / 100 ms at any frame rate).
 6. **Contacts:** the release's labels on the flat floor (lowest vertex within 4 cm, slower than 0.5 m/s), and the image
    contact head's probabilities fused over the views (weights: the P(visible) of the heel, toe, wrist or knee).
 
