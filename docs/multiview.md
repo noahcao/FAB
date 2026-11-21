@@ -93,6 +93,7 @@ MPJPE root-aligned at the mid-hip, W-MPJPE in the dataset's world without any al
 |---|---|---|---|
 | RICH test, 6 sequences, 30 fps | 4 | 59.3 / 28.9 / 25.5 / 24.2 / 24.2 | 514 / 32.8 / 26.7 / 25.2 / 25.2 |
 | MOYO val, 9 sequences, 3 fps | 8 | 47.1 / 25.6 / 23.9 / 23.1 / 21.4 | 294 / 29.4 / 27.8 / 26.7 / 25.2 |
+| CMU Panoptic, 2 sequences, 30 fps | 10 | 54.5 / 41.5 / 40.0 / 39.7 / 39.0 | 180 / 46.1 / 40.4 / 37.8 / 35.7 |
 
 - One camera recovers the pose well but not its place: the world error is the monocular depth error, up to metres for
   people far from the camera. A second camera removes most of it.
@@ -100,6 +101,9 @@ MPJPE root-aligned at the mid-hip, W-MPJPE in the dataset's world without any al
   MPJPE against 25.6 mm for random pairs. Cameras 60-120 degrees apart work best.
 - Ground truth: RICH's SMPL-X fits mapped to SMPL topology with MHR's public SMPL-X -> MHR -> SMPL maps; MOYO's SMPL
   fits. RICH's floor comes from a plane fit to the scene scan; MOYO's frames are its released every-10th-frame set.
+- CMU Panoptic's ground truth is 3D keypoints, so its rows score 13 joints (hips, knees, ankles, neck, shoulders, elbows,
+  wrists) of the predicted SMPL skeleton against them by name; its plateau includes the 1-5 cm offset between the two
+  joint definitions. Its sequences have cameras all around the person (a one-sided rig is left out of the pooled row).
 
 ## Outputs
 
