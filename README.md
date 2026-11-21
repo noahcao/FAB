@@ -48,6 +48,7 @@ fab-retarget output/world/steps_up.npz --out output/g1           # G1 motion on 
 ```
 
 - `fab-retarget --mode mesh` or `--mode skeleton` retargets from the fitted mesh or the joints instead of the dense points.
+- `fab-retarget` also takes an SMPL motion file from any source ([SMPL files](docs/retarget.md#smpl-files)).
 - `fab-retarget-ee` places the robot's hands and feet where the person's were, on a flat floor ([retarget_ee](docs/retarget_ee.md)).
 - `fab-world` needs static, textured surroundings within about 8 m of the camera.
 
