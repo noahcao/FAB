@@ -722,7 +722,7 @@ def export(out, name, views, fps, t, body, pose, betas, trans, joints, verts, va
 # ----------------------------------------------------------------------------------------------------------- main
 
 
-def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fast=False, device="cuda"):
+def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fast=False, device="cuda", trackers=""):
     from fab.predictor import FABPredictor
 
     views, info = load_rig(rig)
@@ -756,6 +756,8 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
     j14_w = np.stack([np.where(np.isfinite(f["j14"]).all(1), f["j14_w"], 0.0) if v else np.zeros(14) for f, v in zip(frames, valid)])
     contact = np.stack([f["contact"] if f is not None else nan(16) for f in frames])
     n_floor = 0
+    tnotes = None
+    assert not (trackers and len(views) == 1), "--trackers needs two or more cameras (the fused path)"
     if len(views) == 1:  # one camera: the release's own single-view result (its SMPL fit, mapped by T_world_cam)
         R, betas, V, valid = single_view_body(people[0], sel[:, 0], views[0], body, device)
         method = "one camera: the release's own per-frame SMPL fit mapped by T_world_cam, the release's world smoothing"
@@ -763,6 +765,11 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
         if info["floor_z"] is not None:  # the rig's floor: knees / hands in contact held on it, feet kept above it
             surf, j14, n_floor = floor_contacts(frames, valid, surf, j14, vis_idx, contact_parts(fab.j14, body),
                                                 float(info["floor_z"]))
+        if trackers:  # optional: world-space trackers fused with the views by a smoother (fab/multiview_trackers.py)
+            from fab import multiview_trackers
+
+            surf, surf_w, j14, j14_w, tnotes = multiview_trackers.smooth(trackers, views, info, t, people, sel, frames,
+                                                                         valid, surf_w, j14_w, vis_idx, sidx, fab.j14, body)
         R_fit = np.linalg.inv(views[0].T_world_cam)[:3, :3]
         R, betas, V = fit_sequence(surf, surf_w, j14, j14_w, valid, R_fit, fab.smpl_fitter_path, sidx, fab.j14, device, body)
         method = ("the released FAB per view, keypoints triangulated, dense points fused with the visibility head's "
@@ -781,7 +788,8 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
     notes = {"pipeline": f"fab-multiview (docs/multiview.md): {method}",
              "rig": info["source"], "cameras": [v.name for v in views], "model": model, "fast": fast,
              "fitter": fab.smpl_fitter_path, "floor_z": floor_z, "floor_source": "rig" if info["floor_z"] is not None else "body",
-             "world": "the rig's world turned so that up is +z; T_world_cam: the first camera (all: T_world_cams)", **stats}
+             "world": "the rig's world turned so that up is +z; T_world_cam: the first camera (all: T_world_cams)", **stats,
+             **({"trackers": tnotes} if tnotes is not None else {})}
     f = export(out, name, views, fps, t, body, pose, betas, trans, joints, verts, valid, floor_z, contact, surf_f, sidx, notes)
     np.savez(work / f"{name}_fusion.npz", sel=sel, kp=np.stack([f_["kp"] if f_ else nan(N_KP, 3) for f_ in frames]),
              tri=np.stack([f_["tri"] if f_ else np.zeros(N_KP, bool) for f_ in frames]), surf=surf, surf_w=surf_w,
@@ -804,10 +812,12 @@ def main(argv=None):
     p.add_argument("--model", default="fab-l", help="fab-l (default) or fab-s (the dense head is needed)")
     p.add_argument("--fast", action="store_true", help="the compiled fast path (fast=True); default eager")
     p.add_argument("--weights", default="", help="weights folder (default $FAB_WEIGHTS or $FAB_HOME/weights)")
+    p.add_argument("--trackers", default="", help="optional world-space trackers, <body point>=<file>[,...] (e.g. "
+                   "left_wrist=l.npz,right_wrist=r.csv), fused with the views (docs/multiview.md, Optional: tracker input)")
     a = p.parse_args(argv)
     if a.weights:
         os.environ["FAB_WEIGHTS"] = a.weights
-    run(a.rig, a.out, a.name or None, a.views, a.subject_boxes, a.model, a.fast)
+    run(a.rig, a.out, a.name or None, a.views, a.subject_boxes, a.model, a.fast, trackers=a.trackers)
 
 
 if __name__ == "__main__":

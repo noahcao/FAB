@@ -19,6 +19,7 @@ fab-retarget output/mv/<name>.npz --out output/g1            # the G1 motion, as
 | `--subject_boxes` | the rule below | a folder of `<camera name>.npz`, `box` (T, 4) xyxy per synced frame, NaN = unknown (identity only) |
 | `--model` | `fab-l` | `fab-l` or `fab-s` (the fusion needs the dense head) |
 | `--fast` | off | FAB's compiled path (`fast=True`); the default is the eager path |
+| `--trackers` | off | world-space trackers, `<body point>=<file>[,...]` ([Optional: tracker input](#optional-tracker-input)) |
 
 ## The rig
 
@@ -104,3 +105,45 @@ As `fab-world` ([world.md](world.md#outputs)), in the rig's world (z up, metres)
   probabilities.
 - With two views, a joint whose 2D is wrong along the epipolar line in one view (e.g. a knee hidden behind the hands)
   still triangulates consistently and cannot be detected; a third camera removes this.
+
+## Optional: tracker input
+
+World-space trackers, such as VIVE trackers on the hands, wrists or pelvis, can be fused with the views (two or more
+cameras). This is off unless `--trackers` is given. Without it, `fab-multiview` is unchanged.
+
+```bash
+fab-multiview take/ --out output/mv --trackers left_wrist=left.npz,right_wrist=right.csv
+```
+
+**Input.** One file per tracker, mapped to a body point: `pelvis`, `chest`, `head`, `left_wrist` / `right_wrist`
+(also `left_hand` / `right_hand`), `left_foot` / `right_foot` (also `left_ankle` / `right_ankle`). Times are on the rig's
+clock, the same one as the camera timestamps (or `i / fps + offset`). Poses are in the rig's world, before the `up` turn.
+
+| file | contents |
+|---|---|
+| `.npz` | `t` (N,) seconds, `xyz` (N, 3) metres; optional `quat` (N, 4) wxyz (tracker -> world) and `valid` (N,) bool |
+| `.csv` | a header `t,x,y,z`, optional `qw,qx,qy,qz` and `valid` (0 / 1), then one row per sample |
+
+**What it does** (`fab/multiview_trackers.py`). After the fusion, one batch smoother runs over the whole clip. Its
+solution is the one a Rauch-Tung-Striebel smoother gives. The SMPL fit and the export then run as above, so
+`fab-retarget` runs unchanged.
+- **State:** every target point of the fit (the 468 dense points and the 14 joints) at every frame. The motion prior is
+  constant velocity (white acceleration, 10 m/s^2).
+- **The views:** each view's points as the fusion places them. Each has an anisotropic covariance: 8 cm along that
+  camera's ray (monocular depth) and 2 cm across it, divided by the view's weight (P(visible)). The floor rule above
+  applies to the views' per-frame means.
+- **A tracker** carries the points rigid with its body segment: the dense points on that SMPL part (e.g. the hand) and
+  its joints (e.g. the wrist). Each point has one static offset in the tracker's frame, estimated together with the
+  trajectories from the tracker's own frames. The tracker's covariance is 3 mm. In the SMPL fit, these points weigh
+  (2 cm / 3 mm)^2 times their sample's weight: the tracker's information over a view's. The fit therefore follows the
+  tracked segment.
+- **Without a quaternion,** the segment's rotation comes from the views.
+- **Robustness:** samples flagged invalid, non-finite, or repeating the previous pose bit for bit (frozen) are dropped.
+  A frame's pose is interpolated between the valid samples around it, across gaps of up to 0.1 s. Each sample is then
+  weighted by its distance from the views' own estimate (Tukey's biweight, 15 cm). Lost, jumping or drifting samples
+  therefore give way to the views. A drift below about 10 cm is not told apart from the views' own error.
+- **Offsets:** they come from the views. A bias of the views that stays constant in the tracker's frame stays in them;
+  the tracker removes the rest of the views' error on its segment.
+
+`notes.trackers` in the output records, per tracker, how many samples were dropped, the share of frames with a pose and
+with an accepted sample, and the estimated offset of its joint.

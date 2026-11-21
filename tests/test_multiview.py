@@ -353,7 +353,7 @@ class SingleViewUnchanged(unittest.TestCase):
 
     def test_release_modules_do_not_import_multiview(self):
         for f in list((REPO / "fab").rglob("*.py")) + list((REPO / "bench").rglob("*.py")) + list((REPO / "scripts").glob("*.py")):
-            if f.name != "multiview.py":
+            if f.name not in ("multiview.py", "multiview_trackers.py"):
                 import re
 
                 hit = re.search(r"fab\.multiview|from fab import multiview|from \.+ ?import multiview|from \.+multiview", f.read_text())
