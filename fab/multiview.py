@@ -25,6 +25,8 @@ Steps (one rule each):
              betas and two more steps with the shape fixed; the release's world smoothing (rotations sigma 2, pelvis
              sigma 3 frames).
   7. export  fab-world's layout in the rig's world (z up; a flat floor at floor_z), so fab-retarget runs on it unchanged.
+With one camera (--views of one), the output is the release's own single-view result: its per-frame SMPL fit mapped by
+T_world_cam, the clip's median betas, the release's world smoothing (single_view_body + world_body).
 
     fab-multiview rig.json --out output/mv            # or a take folder holding world.json
     fab-multiview rig.json --out output/mv --views cam0,cam1 --subject_boxes boxes/   # <camera name>.npz box (T, 4)
@@ -751,10 +753,17 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
     j14_w = np.stack([np.where(np.isfinite(f["j14"]).all(1), f["j14_w"], 0.0) if v else np.zeros(14) for f, v in zip(frames, valid)])
     contact = np.stack([f["contact"] if f is not None else nan(16) for f in frames])
     n_floor = 0
-    if info["floor_z"] is not None:  # the rig's floor: knees / hands in contact held on it, feet kept above it
-        surf, j14, n_floor = floor_contacts(frames, valid, surf, j14, vis_idx, contact_parts(fab.j14, body), float(info["floor_z"]))
-    R_fit = np.linalg.inv(views[0].T_world_cam)[:3, :3]
-    R, betas, V = fit_sequence(surf, surf_w, j14, j14_w, valid, R_fit, fab.smpl_fitter_path, sidx, fab.j14, device, body)
+    if len(views) == 1:  # one camera: the release's own single-view result (its SMPL fit, mapped by T_world_cam)
+        R, betas, V, valid = single_view_body(people[0], sel[:, 0], views[0], body, device)
+        method = "one camera: the release's own per-frame SMPL fit mapped by T_world_cam, the release's world smoothing"
+    else:
+        if info["floor_z"] is not None:  # the rig's floor: knees / hands in contact held on it, feet kept above it
+            surf, j14, n_floor = floor_contacts(frames, valid, surf, j14, vis_idx, contact_parts(fab.j14, body),
+                                                float(info["floor_z"]))
+        R_fit = np.linalg.inv(views[0].T_world_cam)[:3, :3]
+        R, betas, V = fit_sequence(surf, surf_w, j14, j14_w, valid, R_fit, fab.smpl_fitter_path, sidx, fab.j14, device, body)
+        method = ("the released FAB per view, keypoints triangulated, dense points fused with the visibility head's "
+                  "P(visible), one SMPL fit per frame, the release's world smoothing")
     pose, trans, joints, verts = world_body(R, V, betas, valid, fps, body)
     floor_z = info["floor_z"]
     if floor_z is None:  # the 10th percentile of the body's lowest point
@@ -766,8 +775,7 @@ def run(rig, out, name=None, views_only="", subject_boxes="", model="fab-l", fas
              "triangulated_joints": float(np.mean([f["tri"][J14].mean() for f in frames if f is not None])),
              "subject_per_view": {v.name: float((sel[:, j] >= 0).mean()) for j, v in enumerate(views)},
              "floor_contacts": n_floor}
-    notes = {"pipeline": "fab-multiview (docs/multiview.md): the released FAB per view, keypoints triangulated, dense points "
-                         "fused with the visibility head's P(visible), one SMPL fit per frame, the release's world smoothing",
+    notes = {"pipeline": f"fab-multiview (docs/multiview.md): {method}",
              "rig": info["source"], "cameras": [v.name for v in views], "model": model, "fast": fast,
              "fitter": fab.smpl_fitter_path, "floor_z": floor_z, "floor_source": "rig" if info["floor_z"] is not None else "body",
              "world": "the rig's world turned so that up is +z; T_world_cam: the first camera (all: T_world_cams)", **stats}

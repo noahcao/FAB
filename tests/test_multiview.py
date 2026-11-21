@@ -398,5 +398,41 @@ class SingleViewUnchanged(unittest.TestCase):
                                 self.assertEqual(qa[k], qb[k], k)
 
 
+class OneCamera(unittest.TestCase):
+    @unittest.skipUnless(have_inputs(), "needs the weights, SAM 3D Body's config and SMPL (README, Install)")
+    def test_one_camera_is_the_release(self):
+        """A one-camera run exports the release's own single-view result: its per-frame SMPL fit mapped by T_world_cam
+        with the release's world smoothing (single_view_body + world_body on the run's own records)."""
+        import shutil
+
+        import cv2
+        import torch
+
+        from fab.predictor import default_K
+
+        torch.set_num_threads(8)
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "c0").mkdir()
+            img = REPO / "assets" / "demo" / "skater_seated.jpg"
+            for i in range(3):
+                shutil.copy(img, d / "c0" / f"{i:03d}.jpg")
+            K = default_K(*cv2.imread(str(img)).shape[:2])
+            T = look_at([0.0, -3.0, 1.0], [0.0, 0.0, 1.0])
+            (d / "rig.json").write_text(json.dumps({"fps": 30, "cameras": [{"name": "c0", "frames": "c0", "K": K.tolist(),
+                                                                            "T_world_cam": T.tolist()}]}))
+            f = mv.run(d / "rig.json", d / "out", device="cpu")
+            z = np.load(f, allow_pickle=True)
+            self.assertIn("release's own per-frame SMPL fit", json.loads(str(z["notes"]))["pipeline"])
+            views, _ = mv.load_rig(d / "rig.json")
+            people = [pickle.loads((d / "out" / "work" / "views" / "c0.pkl").read_bytes())["people"]]
+            sel = np.load(d / "out" / "work" / "rig_fusion.npz")["sel"]
+            body = mv.smpl_model("cpu")
+            R, betas, V, valid = mv.single_view_body(people[0], sel[:, 0], views[0], body, "cpu")
+            pose, trans, joints, verts = mv.world_body(R, V, betas, valid, 30.0, body)
+            self.assertTrue(np.allclose(z["joints"], joints.astype(np.float32), atol=1e-6))
+            self.assertTrue(np.allclose(z["pose"], pose.astype(np.float32), atol=1e-6))
+
+
 if __name__ == "__main__":
     unittest.main()

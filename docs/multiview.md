@@ -76,7 +76,8 @@ Frames are matched to the first camera's timeline: each camera's nearest frame w
 6. **Contacts:** the release's labels on the flat floor (lowest vertex within 4 cm, slower than 0.5 m/s), and the image
    contact head's probabilities fused over the views (weights: the P(visible) of the heel, toe, wrist or knee).
 
-With one camera there is nothing to triangulate: the output is that view's dense points through steps 4-6.
+With one camera there is nothing to fuse: the output is the release's own single-view result (FAB's per-frame SMPL fit,
+mapped into the world by the camera's `T_world_cam`, the clip's median betas and the release's world smoothing).
 
 ## Outputs
 
