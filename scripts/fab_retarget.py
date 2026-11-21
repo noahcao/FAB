@@ -1,7 +1,11 @@
 """FAB human motion -> Unitree G1 reference motion with the released retargeter (fab-retarget).
 
 Input: a fab-world output (<out>/<clip>.npz, with its scene reconstruction in <out>/work/joint/recon/<clip>.npz +
-<clip>_hfield.npz), or such a recon <clip>.npz next to its _hfield.npz; --mode skeleton also takes a skeleton file (below).
+<clip>_hfield.npz), or such a recon <clip>.npz next to its _hfield.npz, or a standalone SMPL file (SMPL / SMPL-H parameters or
+vertices, fab/retarget/smpl_input.py; --up y for y-up data): its world is <clip>_hfield.npz next to it (the motion as given) or
+else a flat floor at z = 0 with the motion's lowest foot vertex over the clip on it, used as is (steps 1-2), in every mode (mesh
+by default); --mode skeleton also takes a skeleton file (below). SMPL and skeleton files need no FAB weights (points mode
+builds its correspondence once from FAB-L's).
 Steps (fab/retarget/release_config.py holds the configuration):
   1. bench.videomimic.scene_retarget on the reconstruction's level-snapped heightfield (<out>/g/solve_pre): the scene
      objective, foot contacts (4 cm / 0.15 m/s: the mesh rule, or its joint rule in skeleton mode), the input smoother (sigma
@@ -119,27 +123,70 @@ def skeleton_inputs(src, c, out):
     return dr, {"skeleton_file": str(src), "world": src_w}
 
 
-def dense_inputs(c, rd, out):
+def smpl_inputs(src, c, out, up="z"):
+    """A standalone SMPL file (parameters or vertices; fab/retarget/smpl_input.py) as a recon copy under <out>/smpl_recon
+    (joints, verts, fps, frames, valid, no contacts: the solver labels them on the terrain) and its world: <clip>_hfield.npz
+    next to the file, the motion as given; else a flat floor at z = 0 on a 4 cm grid over the pelvis path + 2 m, the motion
+    shifted in z so that its lowest foot vertex over the clip is at z = 0."""
+    from fab.retarget import smpl_input as SI
+
+    m = SI.load(src, up)
+    V, J = m["verts"], m["joints"]
+    hf = src.with_name(f"{c}_hfield.npz")
+    if hf.exists():
+        h = np.load(hf, allow_pickle=True)
+        world, src_w, dz = {k: h[k] for k in ("x0", "y0", "res", "height")}, str(hf), 0.0
+    else:
+        dz = SI.foot_floor_shift(V)
+        V[..., 2] += dz
+        J[..., 2] += dz
+        res, lo, hi = 0.04, J[:, 0, :2].min(0) - 2.0, J[:, 0, :2].max(0) + 2.0
+        nx, ny = int(np.ceil((hi[0] - lo[0]) / res)) + 1, int(np.ceil((hi[1] - lo[1]) / res)) + 1
+        world = {"x0": float(lo[0]), "y0": float(lo[1]), "res": res, "height": np.zeros((ny, nx), np.float32)}
+        src_w = "flat floor at z = 0"
+    dr = out / "smpl_recon"
+    dr.mkdir(parents=True, exist_ok=True)
+    np.savez(dr / f"{c}.npz", joints=J.astype(np.float32), verts=V.astype(np.float32), fps=m["fps"], frames=m["frames"],
+             valid=np.ones(len(V), bool), contacts="{}")
+    np.savez(dr / f"{c}_hfield.npz", **world)
+    info = {"smpl_file": str(src), **m["info"], "world": src_w,
+            "ground_dz_m": dz if not hf.exists() else "none (a given world)"}
+    print(f"[fab_retarget] {c}: SMPL file ({m['info']['kind']}, {m['info']['gender']}, up {up}) {len(V)} frames at {m['fps']:g} fps; "
+          f"world: {src_w}" + ("" if hf.exists() else f", lowest foot vertex to z = 0 (dz {dz:+.3f} m)"), flush=True)
+    return dr, info
+
+
+def dense_inputs(c, rd, out, standalone=False):
     """Points mode: the reconstruction with FAB's registered dense points (a copy under <out>/d_recon; fab-world's files are
-    not changed) and what applied."""
+    not changed) and what applied; standalone (an SMPL file): no dense points."""
     from fab.retarget import dense_corr, dense_inputs as DI
 
     corr = dense_corr.default_path()
     if not corr.exists() or dense_corr.stale(corr):  # (re)built for the installed G1 description
+        from fab import paths
+
+        ck = paths.model_file("fab-l")
+        if not ck.exists():  # the correspondence's dense-point ids are FAB-L's
+            raise SystemExit(f"[fab_retarget] points mode needs the dense-point correspondence {corr}, built once from FAB-L's "
+                             f"weights ({ck}: not found). Install the weights (README.md) or use --mode mesh or skeleton"
+                             + (" (mesh is an SMPL file's default)" if standalone else ""))
         dense_corr.make(out=corr)
     sidx = np.load(corr)["surface_idx"]
-    work = rd.parent.parent  # fab-world's <out>/work (work/joint/recon)
+    work = None if standalone else rd.parent.parent  # fab-world's <out>/work (work/joint/recon)
     dr = out / "d_recon"
     dr.mkdir(parents=True, exist_ok=True)
     for f in rd.glob(f"{c}*"):
         if f.name != f"{c}.npz" and not (dr / f.name).exists():
             (dr / f.name).symlink_to(f.resolve())
     z = dict(np.load(rd / f"{c}.npz", allow_pickle=True))
-    raw = work / "ours" / "fab" / f"{c}_raw.npz"
-    reg = DI.register_points(rd / f"{c}.npz", raw, sidx)
-    why = None if reg else DI.points_unavailable(raw, sidx)
+    if standalone:
+        reg, why = None, "a standalone SMPL file (no FAB dense points)"
+    else:
+        raw = work / "ours" / "fab" / f"{c}_raw.npz"
+        reg = DI.register_points(rd / f"{c}.npz", raw, sidx)
+        why = None if reg else DI.points_unavailable(raw, sidx)
     np.savez(dr / f"{c}.npz", **z, **(reg or {}))
-    info = {"work": str(work), "correspondence": str(corr),
+    info = {"work": None if standalone else str(work), "correspondence": str(corr),
             "points": "FAB dense points registered on the body" if reg else "the body's own vertices at the dense ids (no dense points)",
             "pts_info": json.loads(reg["pts_info"]) if reg else None, "no_points_cause": why}
     print(f"[fab_retarget] {c}: points mode: points = {info['points']}", flush=True)
@@ -149,14 +196,30 @@ def dense_inputs(c, rd, out):
     return dr, info
 
 
+def default_mode(src):
+    """--mode when none is given: points; mesh for a standalone SMPL file (it has no FAB dense points)."""
+    from fab.retarget import smpl_input as SI
+
+    return "mesh" if SI.kind(np.load(src, allow_pickle=True).files) else "points"
+
+
 def scene(a, c, out, extra_cfg=None):
     """The fab-world reconstruction (work/joint/recon/<clip>.npz + _hfield.npz) through the scene-terrain chain."""
     from fab.retarget import release_config as C
+    from fab.retarget import smpl_input as SI
 
     src = Path(a.input).resolve()
-    rd = src.parent if "verts" in np.load(src, allow_pickle=True).files else src.parent / "work" / "joint" / "recon"  # export -> its recon
-    sk_info = None
-    if a.mode == "skeleton" and not (rd / f"{c}.npz").exists():  # a skeleton file with its world
+    files = np.load(src, allow_pickle=True).files
+    rd = src.parent if "verts" in files else src.parent / "work" / "joint" / "recon"  # export -> its recon
+    sk_info = smpl_info = None
+    up = getattr(a, "up", "z")
+    if SI.kind(files, a.mode):  # a standalone SMPL file with its world
+        if getattr(a, "ground_aware", False):
+            raise SystemExit("[fab_retarget] --ground_aware needs fab-world's foot contacts; a standalone SMPL file has none")
+        rd, smpl_info = smpl_inputs(src, c, out, up)
+    elif up != "z":
+        raise SystemExit("[fab_retarget] --up applies to standalone SMPL files only (docs/retarget.md)")
+    elif a.mode == "skeleton" and not (rd / f"{c}.npz").exists():  # a skeleton file with its world
         rd, sk_info = skeleton_inputs(src, c, out)
     assert (rd / f"{c}.npz").exists() and (rd / f"{c}_hfield.npz").exists(), \
         f"no recon + hfield for {c} under {rd}" + ("" if a.mode == "skeleton" else " (a joints-only file needs --mode skeleton)")
@@ -171,7 +234,7 @@ def scene(a, c, out, extra_cfg=None):
                              "<out>/work/contacts); give a fab-world output, or drop --ground_aware")
     dense_info = None
     if a.mode == "points":
-        rd, dense_info = dense_inputs(c, rd, out)
+        rd, dense_info = dense_inputs(c, rd, out, standalone=smpl_info is not None)
         cfg = C.solve_cfg_dp()
     else:
         cfg = C.solve_cfg()
@@ -182,7 +245,8 @@ def scene(a, c, out, extra_cfg=None):
         cfg, pin_cfg = C.ground_aware_cfg(cfg, ga.parent.resolve()), C.ground_aware_pin(C.PIN)
     if a.no_graph:  # the plain solver / pin loops (the CUDA-graph default is bitwise the same, faster)
         cfg = dict(cfg, graph=0)
-    level = [] if sk_info else ["--clean"]  # a reconstruction's heightfield is level-snapped; a given world is used as is
+    given = sk_info is not None or smpl_info is not None
+    level = [] if given else ["--clean"]  # a reconstruction's heightfield is level-snapped; a given world is used as is
     mode = ["--mode", "skeleton"] if a.mode == "skeleton" else []
 
     def solve(tag, terrain=None):
@@ -201,9 +265,11 @@ def scene(a, c, out, extra_cfg=None):
         info["dense"] = dense_info
     if sk_info is not None:
         info["skeleton_input"] = sk_info
+    if smpl_info is not None:
+        info["smpl_input"] = smpl_info
     solve("solve_pre")  # 1. on the reconstruction's own (level-snapped) heightfield
     pin("solve_pre", "p_pre")  # 2.
-    if a.no_clean or sk_info:
+    if a.no_clean or given:
         return run_dir / "p_pre" / f"{c}_motion.npz", dict(info, clean="off (--no_clean)" if a.no_clean else "off (a given world)")
     stage, clean = out / "stage" / "clips", out / "clean"
     wk = Path(dense_info["work"]) if dense_info else rd.parent.parent  # fab-world's work dir
@@ -230,29 +296,32 @@ def scene(a, c, out, extra_cfg=None):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("input", help="fab-world's <out>/<clip>.npz (or a recon <clip>.npz next to its _hfield.npz); --mode skeleton: "
-                   "also a skeleton file (docs/retarget.md)")
+    p.add_argument("input", help="fab-world's <out>/<clip>.npz (or a recon <clip>.npz next to its _hfield.npz), a standalone SMPL "
+                   "file (parameters or vertices); --mode skeleton: also a skeleton file (docs/retarget.md)")
     p.add_argument("--out", default="output/fab_retarget")
     p.add_argument("--no_clean", action="store_true", help="no terrain clean (solve + pin on the reconstruction's heightfield)")
     p.add_argument("--mode", default=None, choices=("points", "mesh", "skeleton"),
-                   help="points (default): FAB's predicted dense points (the mesh mode plus the dense-point term, "
+                   help="points (default; mesh for a standalone SMPL file): FAB's predicted dense points (the mesh mode plus the dense-point term, "
                    "fab/retarget/release_config.py W_PTS); mesh: the mesh fitted to them; skeleton: the joints alone "
                    "(docs/retarget.md: the modes and the skeleton input)")
     p.add_argument("--release", default=None, choices=("Dp", "G"), help=argparse.SUPPRESS)  # hidden alias of --mode points / mesh
     p.add_argument("--ground_aware", action="store_true", help="opt-in: the feet's contacts from fab-world's video contact model "
                    "(work/contacts), labelled feet held at the floor height with sliding allowed, and no flight when the person's "
                    "foot is near the floor (docs/retarget.md: ground-aware references)")
+    p.add_argument("--up", default="z", choices=("z", "y"), help="a standalone SMPL file's up axis (y: (x, y, z) -> (x, -z, y); "
+                   "docs/retarget.md)")
     p.add_argument("--no_graph", action="store_true", help="the plain solver / pin loops instead of CUDA graphs (bitwise the same "
                    "result, slower)")
     a = p.parse_args()
     alias = {"Dp": "points", "G": "mesh"}
     if a.mode and a.release and alias[a.release] != a.mode:
         p.error(f"--release {a.release} is --mode {alias[a.release]}, not --mode {a.mode}")
-    a.mode = a.mode or alias.get(a.release) or "points"
+    a.mode = a.mode or alias.get(a.release)
     c = Path(a.input).stem
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(R_))
+    a.mode = a.mode or default_mode(a.input)
     f, info = scene(a, c, out)
     assert f.exists(), f"no output {f}"
     shutil.copy(f, out / f"{c}_g1.npz")
