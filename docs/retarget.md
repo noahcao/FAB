@@ -14,7 +14,7 @@ fab-retarget output/world/steps_up.npz --out output/g1_noclean --no_clean      #
 
 | mode | what the solver reads |
 |---|---|
-| `points` (default) | the joints, the fitted mesh and FAB's dense surface points |
+| `points` (default; mesh for SMPL files) | the joints, the fitted mesh and FAB's dense surface points |
 | `mesh` | the joints and the fitted mesh |
 | `skeleton` | the joints only |
 
@@ -68,12 +68,14 @@ Non-SMPL skeletons work as well as their joints sit where SMPL's do; mocap ankle
 
 ## SMPL files
 
-`fab-retarget` also retargets an SMPL motion from any source (motion capture, AMASS, other estimators) without fab-world,
-in all three modes:
+`fab-retarget` also retargets an SMPL motion from any source (motion capture, AMASS, other estimators) without fab-world
+and without images. It needs a CUDA GPU, PyTorch, `pip install -e ".[retarget]"`, the G1 description and the SMPL body models;
+no FAB weights. Mesh mode is the default for SMPL files:
 
 ```bash
-fab-retarget my_smpl.npz --out output/g1_my_smpl --mode mesh
+fab-retarget my_smpl.npz --out output/g1_my_smpl
 fab-retarget my_smpl_yup.npz --out output/g1_my_smpl_yup --up y        # y-up data
+fab-retarget my_smpl.npz --out output/g1_my_smpl_sk --mode skeleton
 ```
 
 A file `<clip>.npz` (metres) is an SMPL file when it holds:
@@ -91,9 +93,10 @@ Rules:
 - `--up y` turns y-up data z-up: (x, y, z) -> (x, -z, y).
 - World: `<clip>_hfield.npz` next to the file (as for skeleton files), with the motion as given; without it a flat floor at
   z = 0, the motion moved vertically so that its lowest foot vertex over the clip is at z = 0. Either is used as is (no clean).
-- Points mode reads the body's own vertices at FAB's dense-point ids (an SMPL file has no FAB dense points), with a WARNING.
-  `<clip>_g1.json` records the input (`smpl_input`) and this (`dense.no_points_cause`). `--ground_aware` needs fab-world's
-  contacts and stops.
+- `--mode points` reads the body's own vertices at FAB's dense-point ids (an SMPL file has no FAB dense points), with a
+  WARNING; it builds the dense-point correspondence once from FAB-L's weights and stops with a message without them.
+  `<clip>_g1.json` records the input (`smpl_input`) and the points used (`dense.no_points_cause`). `--ground_aware` needs
+  fab-world's contacts and stops.
 - In skeleton mode a file that has `joints` is read as a skeleton file.
 - Contacts come from the body as given (the 4 cm / 0.15 m/s rule): feet that float or slide get few contact labels and the G1
   floats with them (three AIST++ dances: a planted foot on 0-6 % of frames). Fast motion also loses detail to the input

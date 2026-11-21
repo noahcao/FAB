@@ -239,6 +239,57 @@ class SmplInputTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             F.scene(Namespace(input=str(sk), mode="skeleton", no_graph=False, no_clean=False, ground_aware=False, up="y"), "sk", self.dir / "o_up")
 
+    def test_default_mode(self):
+        F = fab_retarget()
+        P, B, tr = self.motion()
+        self.assertEqual(F.default_mode(self.save("dm_p.npz", poses=P, trans=tr, fps=30.0)), "mesh")
+        self.assertEqual(F.default_mode(self.save("dm_v.npz", verts=np.zeros((2, 6890, 3)), fps=30.0)), "mesh")
+        self.assertEqual(F.default_mode(self.save("dm_sk.npz", joints=np.zeros((2, 24, 3)), fps=30.0)), "points")
+        self.assertEqual(F.default_mode(self.save("dm_fw.npz", pose=P, betas=B, trans=tr, joints=np.zeros((9, 24, 3)), fps=30.0,
+                                                  T_world_cam=np.tile(np.eye(4), (9, 1, 1)), contacts="{}")), "points")
+
+    def test_points_mode_without_weights_stops(self):
+        F = fab_retarget()
+        keep = {k: os.environ.get(k) for k in ("FAB_HOME", "FAB_WEIGHTS")}
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                os.environ["FAB_HOME"], os.environ["FAB_WEIGHTS"] = d, str(Path(d) / "weights")
+                with self.assertRaises(SystemExit) as e:
+                    F.dense_inputs("dance", Path(d) / "smpl_recon", Path(d) / "out", standalone=True)
+                self.assertIn("--mode mesh", str(e.exception))
+        finally:
+            for k, v in keep.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_smpl_path_imports_no_image_modules(self):
+        """The standalone path (the input step and the solver / pin / gate modules) loads no image-model code or library."""
+        import subprocess
+
+        P, B, tr = self.motion()
+        f = self.save("imp.npz", poses=P, betas=B, trans=tr, fps=30.0)
+        code = f"""
+import importlib.util, json, sys
+from pathlib import Path
+sys.path.insert(0, {str(ROOT)!r})
+spec = importlib.util.spec_from_file_location("fr", {str(ROOT / "scripts" / "fab_retarget.py")!r})
+F = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(F)
+F.smpl_inputs(Path({str(f)!r}), "imp", Path({str(self.dir / "out_imp")!r}))
+import bench.videomimic.scene_retarget, bench.stance_pin, bench.g1_contact_check, bench.videomimic.scene_metrics
+import fab.retarget.dense_inputs, fab.retarget.skeleton, fab.retarget.release_config
+image = ("cv2", "torchvision", "timm", "PIL", "pytorch_lightning", "lightning", "transformers", "open3d", "ultralytics",
+         "huggingface_hub", "roma", "einops", "omegaconf", "yacs", "braceexpand", "fab.predictor", "fab.model", "fab.models",
+         "fab.build_models", "fab.yolo", "fab.sam_3d_body_estimator", "fab.video", "fab.cli")
+print(json.dumps(sorted(m for m in sys.modules if m.split(".")[0] in image or m in image or any(m.startswith(i + ".") for i in image))))
+"""
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(self.dir),
+                           env=dict(os.environ, FAB_SMPL_DIR=str(self.dir)))
+        self.assertEqual(r.returncode, 0, r.stderr[-3000:])
+        self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1]), [])
+
 
 if __name__ == "__main__":
     unittest.main()

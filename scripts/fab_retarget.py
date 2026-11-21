@@ -3,8 +3,9 @@
 Input: a fab-world output (<out>/<clip>.npz, with its scene reconstruction in <out>/work/joint/recon/<clip>.npz +
 <clip>_hfield.npz), or such a recon <clip>.npz next to its _hfield.npz, or a standalone SMPL file (SMPL / SMPL-H parameters or
 vertices, fab/retarget/smpl_input.py; --up y for y-up data): its world is <clip>_hfield.npz next to it (the motion as given) or
-else a flat floor at z = 0 with the motion's lowest foot vertex over the clip on it, used as is (steps 1-2), in every mode;
---mode skeleton also takes a skeleton file (below).
+else a flat floor at z = 0 with the motion's lowest foot vertex over the clip on it, used as is (steps 1-2), in every mode (mesh
+by default); --mode skeleton also takes a skeleton file (below). SMPL and skeleton files need no FAB weights (points mode
+builds its correspondence once from FAB-L's).
 Steps (fab/retarget/release_config.py holds the configuration):
   1. bench.videomimic.scene_retarget on the reconstruction's level-snapped heightfield (<out>/g/solve_pre): the scene
      objective, foot contacts (4 cm / 0.15 m/s: the mesh rule, or its joint rule in skeleton mode), the input smoother (sigma
@@ -162,6 +163,13 @@ def dense_inputs(c, rd, out, standalone=False):
 
     corr = dense_corr.default_path()
     if not corr.exists() or dense_corr.stale(corr):  # (re)built for the installed G1 description
+        from fab import paths
+
+        ck = paths.model_file("fab-l")
+        if not ck.exists():  # the correspondence's dense-point ids are FAB-L's
+            raise SystemExit(f"[fab_retarget] points mode needs the dense-point correspondence {corr}, built once from FAB-L's "
+                             f"weights ({ck}: not found). Install the weights (README.md) or use --mode mesh or skeleton"
+                             + (" (mesh is an SMPL file's default)" if standalone else ""))
         dense_corr.make(out=corr)
     sidx = np.load(corr)["surface_idx"]
     work = None if standalone else rd.parent.parent  # fab-world's <out>/work (work/joint/recon)
@@ -186,6 +194,13 @@ def dense_inputs(c, rd, out, standalone=False):
         print(f"[fab_retarget] WARNING {c}: points mode without FAB's dense points: {why}. The dense-point term uses the body's "
               "own vertices at the same ids instead", flush=True)
     return dr, info
+
+
+def default_mode(src):
+    """--mode when none is given: points; mesh for a standalone SMPL file (it has no FAB dense points)."""
+    from fab.retarget import smpl_input as SI
+
+    return "mesh" if SI.kind(np.load(src, allow_pickle=True).files) else "points"
 
 
 def scene(a, c, out, extra_cfg=None):
@@ -286,7 +301,7 @@ def main():
     p.add_argument("--out", default="output/fab_retarget")
     p.add_argument("--no_clean", action="store_true", help="no terrain clean (solve + pin on the reconstruction's heightfield)")
     p.add_argument("--mode", default=None, choices=("points", "mesh", "skeleton"),
-                   help="points (default): FAB's predicted dense points (the mesh mode plus the dense-point term, "
+                   help="points (default; mesh for a standalone SMPL file): FAB's predicted dense points (the mesh mode plus the dense-point term, "
                    "fab/retarget/release_config.py W_PTS); mesh: the mesh fitted to them; skeleton: the joints alone "
                    "(docs/retarget.md: the modes and the skeleton input)")
     p.add_argument("--release", default=None, choices=("Dp", "G"), help=argparse.SUPPRESS)  # hidden alias of --mode points / mesh
@@ -301,11 +316,12 @@ def main():
     alias = {"Dp": "points", "G": "mesh"}
     if a.mode and a.release and alias[a.release] != a.mode:
         p.error(f"--release {a.release} is --mode {alias[a.release]}, not --mode {a.mode}")
-    a.mode = a.mode or alias.get(a.release) or "points"
+    a.mode = a.mode or alias.get(a.release)
     c = Path(a.input).stem
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(R_))
+    a.mode = a.mode or default_mode(a.input)
     f, info = scene(a, c, out)
     assert f.exists(), f"no output {f}"
     shutil.copy(f, out / f"{c}_g1.npz")
