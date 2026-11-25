@@ -41,6 +41,10 @@ Each person is a dict (numpy, camera frame, metres unless noted):
     fab/seg_maps.paste_roi makes the image map on demand)
   contact (16,) image contact probabilities: 8 static + 8 any, each l_heel, l_toe, r_heel, r_toe, l_hand, r_hand,
     l_knee, r_knee
+  contact_feats=True only (world mode's single body pass): contact_logits (16,), contact_feat (512,) the contact head's
+    last hidden layer (fp16), contact_pts (12, 3) its contact points in the camera frame, contact_uv (12, 2) their image
+    px, contact_vis (12, 3) the visibility head at them (the inputs of the video contact model,
+    train/extract_contact_tracks.py)
   smpl_pose (72,) / smpl_betas (10,) / mesh_smpl_fit (6890, 3): neutral SMPL fitted to the dense surface by the
     one-pass learned fitter. FAB-H's default (profile "mesh") fits the same way to the surface points of its own
     SMPL-topology mesh
@@ -387,7 +391,8 @@ class FABPredictor:
                  fit_gn_iters="auto", fit_gn_robust=50.0, fit_gn_anchor=1e-3, fit_temporal=0.0, fit_temporal_betas=0.0,
                  fit_temporal_root=0.1, foot_sole_w=0.0, fit_gn_ray="auto", det_gpu=True,
                  body_batch="auto", fit_gn_root=0.0, fit_gn_core=1.0, fit_orient_mesh="auto", fit_compile=False,
-                 detector_backend="fab", profile="auto", dense_outputs="auto"):
+                 detector_backend="fab", profile="auto", dense_outputs="auto", contact_feats=False, tracker="iou",
+                 track_kw=None, det_size=640):
         from fab.data.transforms import Compose, GetBBoxCenterScale, TopdownAffine, VisionTransformWrapper
         from fab.decoder_model import build_fab_decoder
         from torchvision.transforms import ToTensor
@@ -524,6 +529,7 @@ class FABPredictor:
         if crop_maps == "auto":  # the bundle's own default (deploy3: True); a separate parts_head keeps the image maps
             crop_maps = bool(self.bundle_defaults.get("crop_maps", False)) and not parts_head
         self.crop_maps = crop_maps  # True: parts_crop / mask_crop (256 x 256) + crop_affine only, no image maps
+        self.contact_feats = bool(contact_feats)  # the contact head's features per person (the video contact model's inputs)
         self.model.map_outputs = True  # part / mask crop maps inside the (graphed) forward
         dh = self.model.dense_head  # a "+extent" person-mask head reads the prompt box (crop units)
         self.mask_extent = dh is not None and dh.mask_dconv is not None and (getattr(dh, "mask_extent", False)
@@ -557,12 +563,18 @@ class FABPredictor:
         # image uploaded once for the detector and the GPU crop
         self.det_gpu = bool(det_gpu) and str(device).startswith("cuda")
         self.track_every, self.track_scale = track_every, track_scale
+        # predict_video's tracker: "iou" (the released one: people matched to the previous frame's by box IoU), "oc"
+        # (fab/track.Tracker: a Kalman filter per person, OC-SORT / BYTE association, persistent ids; track_kw: its
+        # arguments, + "det_low": the detector's lowest score kept for the BYTE stage, default 0.1)
+        if tracker not in ("iou", "oc"):
+            raise ValueError(f"tracker {tracker!r}: 'iou' or 'oc'")
+        self.tracker, self.track_kw = tracker, dict(track_kw or {})
         self.detector = None
         if detector == "deployed":  # the released detector; on the fast path its TensorRT engine when one was built here
             detector = DEPLOYED_DETECTOR if Path(DEPLOYED_DETECTOR).exists() else ""
             if not detector:
                 warnings.warn(f"no person detector at {DEPLOYED_DETECTOR}: pass boxes to predict() or download the weights")
-            elif fast and str(device).startswith("cuda"):
+            elif fast and str(device).startswith("cuda") and int(det_size) == 640:  # (the engine is built at 640)
                 engine = paths.engines_dir(device) / "detector.engine"
                 if engine.exists() and importlib.util.find_spec("ultralytics") is not None:  # the engine extra
                     why = detector_engine_unusable(engine)
@@ -576,6 +588,11 @@ class FABPredictor:
         # ultralytics package's predictor (the reference). A TensorRT detector engine always runs through ultralytics.
         if detector_backend not in ("fab", "ultralytics"):
             raise ValueError(f"detector_backend {detector_backend!r}: 'fab' or 'ultralytics'")
+        # det_size: the detector's letterbox size (the released 640; 960 recovers people under ~50 px in a 640 input,
+        # slightly slower, the same weights); other than 640 it runs on fab.yolo only
+        self.det_size = int(det_size)
+        if self.det_size != 640:
+            detector_backend = "fab"
         self.detector_backend = detector_backend
         if detector:
             self._init_detector(detector)
@@ -780,13 +797,23 @@ class FABPredictor:
     def detect(self, image):  # tensors once predict made them; outside inference mode their in-place refill fails
         return self._detect(image)[0]
 
+    @torch.inference_mode()
+    def detect_scored(self, image, conf=None):
+        """-> (xyxy boxes (N, 4), scores (N,)) of the detections scoring >= conf (default det_conf)."""
+        conf = self.det_conf if conf is None else conf
+        if getattr(self, "detector_backend", "ultralytics") == "fab":
+            return self.detector.detect(image, conf=conf, scores=True)
+        out = self.detector.predict(np.ascontiguousarray(image[..., ::-1]), classes=[0], conf=conf, imgsz=640,
+                                    verbose=False)[0]
+        return out.boxes.xyxy.float().cpu().numpy(), out.boxes.conf.float().cpu().numpy()
+
     def _init_detector(self, detector):
         """self.detector for the path / engine `detector`: fab.yolo's YOLODetector (detector_backend "fab", a .pt
         checkpoint) or ultralytics' YOLO (detector_backend "ultralytics", or a TensorRT engine)."""
         if self.detector_backend == "fab" and not str(detector).endswith(".engine"):
             from fab.yolo import YOLODetector
 
-            self.detector = YOLODetector(detector, self.device)
+            self.detector = YOLODetector(detector, self.device, size=getattr(self, "det_size", 640))
             return
         self.detector_backend = "ultralytics"
         from ultralytics import YOLO
@@ -1201,6 +1228,13 @@ class FABPredictor:
                 dev_out["vis_r"] = torch.softmax(o["vis_logits_rendered"].float(), -1)
         if "contact_logits" in o:
             dev_out["contact"] = torch.sigmoid(o["contact_logits"].float())
+            if self.contact_feats and "contact_feat" in o:
+                from fab.contact_head import CONTACT_POINTS
+
+                dev_out.update(c_logits=o["contact_logits"], c_feat=o["contact_feat"].half(),
+                               c_pts=o["contact_pts"].float() + o["pred_cam_t"].float()[:, None])  # (cam_t: "cam_t")
+                if "vis_logits" in o:
+                    dev_out["c_vis"] = torch.softmax(o["vis_logits"].float(), -1)[:, CONTACT_POINTS]
         if "g1_q" in o and self.kin is not None:
             dev_out["g1_q"] = o["g1_q"].float().clamp(self.kin.lower, self.kin.upper)
             dev_out["g1_R"] = rot6d_to_matrix(o["g1_rot6d"].float())
@@ -1403,15 +1437,38 @@ class FABPredictor:
             c = host["contact"]
             for i, pp in enumerate(people):
                 pp["contact"] = c[i]
+            if "c_feat" in host:  # contact_feats: as train/extract_contact_tracks.py stores them
+                from fab.contact_head import CONTACT_POINTS
+
+                A = b["affine_trans"][0].numpy().astype(np.float64)
+                for i, pp in enumerate(people):
+                    pp["contact_logits"] = host["c_logits"][i]
+                    pp["contact_feat"] = host["c_feat"][i].astype(np.float16)
+                    pp["contact_pts"] = host["c_pts"][i]
+                    if "c_vis" in host:
+                        pp["contact_vis"] = host["c_vis"][i].astype(np.float16)
+                    if "dense_uv" in host:  # the contact points' crop px -> image px (the inverse crop affine)
+                        Ai = np.linalg.inv(np.vstack([A[i], [0, 0, 1]]))
+                        q = host["dense_uv"][i, CONTACT_POINTS].astype(np.float64) * self.model.size
+                        pp["contact_uv"] = (q @ Ai[:2, :2].T + Ai[:2, 2]).astype(np.float32)
         if "g1_q" in o and self.kin is not None:
             q, R = host["g1_q"], host["g1_R"]
             for i, pp in enumerate(people):
                 pp["g1_q"], pp["g1_root"] = q[i], R[i]
         return people
 
+    def _kp_box(self, pp, H, W):
+        kp = pp["keypoints2d_projected"][BODY_KP]
+        c, wh = (kp.min(0) + kp.max(0)) / 2, (kp.max(0) - kp.min(0)) * self.track_scale
+        return np.concatenate([c - wh / 2, c + wh / 2]).clip(0, [W - 1, H - 1, W - 1, H - 1]).astype(np.float32)
+
     def predict_video(self, frames, K=None):
         """Generator over frames: detector every track_every frames, otherwise each tracked person's box from its
-        previous-frame keypoints (x track_scale); people are matched to tracks by box IoU."""
+        previous-frame keypoints (x track_scale); people are matched to tracks by box IoU (tracker "oc": by
+        fab/track.Tracker, and each person gets "track", its persistent id, and "det_score")."""
+        if self.tracker == "oc":
+            yield from self._predict_video_oc(frames, K)
+            return
         tracks, last = [], []
         for t, image in enumerate(frames):
             H, W = image.shape[:2]
@@ -1428,6 +1485,61 @@ class FABPredictor:
                 kp = pp["keypoints2d_projected"][BODY_KP]
                 c, wh = (kp.min(0) + kp.max(0)) / 2, (kp.max(0) - kp.min(0)) * self.track_scale
                 tracks.append(np.concatenate([c - wh / 2, c + wh / 2]).clip(0, [W - 1, H - 1, W - 1, H - 1]).astype(np.float32))
+            yield people
+
+    def _predict_video_oc(self, frames, K=None):
+        """predict_video with fab/track.Tracker: on detector frames (every track_every frames, the frame after a person's
+        box was rejected, and while nobody is tracked) the detections down to det_low are associated with the people's
+        Kalman predictions (OC-SORT + BYTE) and new people start at det_conf; between them each person's box comes from
+        its previous fit's keypoints (x track_scale), gated by its prediction. People not observed on a frame (lost,
+        occluded) are not run and keep their id for max_age frames."""
+        from fab.track import Tracker
+
+        kw = dict(self.track_kw)
+        low = float(kw.pop("det_low", 0.1))
+        kw.setdefault("high", self.det_conf)
+        kw.setdefault("birth", self.det_conf)
+        kw.setdefault("low", low)
+        trk = Tracker(**kw)
+        import time
+
+        # host seconds per stage (detector incl. its sync, tracker, body) and detector frames: self.track_timing
+        tm = self.track_timing = {"frames": 0, "detector_frames": 0, "detect_s": 0.0, "track_s": 0.0, "body_s": 0.0}
+        last, kp, again = {}, {}, False  # id -> the previous frame's output / its keypoint box; detect next frame
+        for t, image in enumerate(frames):
+            H, W = image.shape[:2]
+            tm["frames"] += 1
+            if t % self.track_every == 0 or not kp or again or self.detector is None:
+                t0 = time.perf_counter()
+                if self.detector is not None:
+                    boxes, scores = self.detect_scored(image, conf=min(low, self.det_conf))
+                else:
+                    boxes, scores = np.zeros((0, 4), np.float32), np.zeros(0, np.float32)
+                t1 = time.perf_counter()
+                got = trk.step(boxes, scores)
+                tm["detect_s"] += t1 - t0
+                tm["track_s"] += time.perf_counter() - t1
+                tm["detector_frames"] += 1
+                ids = sorted(got)
+                bx = [boxes[got[i]] for i in ids]
+                sc = [float(scores[got[i]]) for i in ids]
+                again = False
+            else:
+                t1 = time.perf_counter()
+                got = trk.observe(kp)
+                tm["track_s"] += time.perf_counter() - t1
+                ids = sorted(got)
+                bx = [kp[i] for i in ids]
+                sc = [float(last[i].get("det_score", 1.0)) for i in ids]
+                again = len(got) < len(kp)  # a person's box was rejected: the detector on the next frame
+            t2 = time.perf_counter()
+            people = self.predict(image, K, np.asarray(bx, np.float32).reshape(-1, 4),
+                                  prev=[last.get(i) for i in ids]) if ids else []
+            tm["body_s"] += time.perf_counter() - t2
+            for i, s_, pp in zip(ids, sc, people):
+                pp["track"], pp["det_score"] = int(i), s_
+            last = {pp["track"]: pp for pp in people}
+            kp = {pp["track"]: self._kp_box(pp, H, W) for pp in people}
             yield people
 
     @staticmethod

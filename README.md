@@ -51,7 +51,9 @@ fab-multiview rig.json --out output/mv                           # several calib
 - `fab-retarget --mode mesh` or `--mode skeleton` retargets from the fitted mesh or the joints instead of the dense points.
 - `fab-retarget` also takes an SMPL motion file from any source ([SMPL files](docs/retarget.md#smpl-files)).
 - `fab-retarget-ee` places the robot's hands and feet where the person's were, on a flat floor ([retarget_ee](docs/retarget_ee.md)).
-- `fab-world` needs static, textured surroundings within about 8 m of the camera.
+- `fab-world` needs static, textured surroundings within about 8 m of the camera. On a fixed camera it takes a fast path
+  without SLAM; `--motion learned` adds FAB-M, a learned world-motion stage for static cameras;
+  `--profile paper` runs the paper's world pipeline ([world](docs/world.md)).
 
 ## Outputs
 
@@ -108,7 +110,9 @@ FAB-H: compiled PyTorch). FAB-H fits SMPL to its MHR mesh (MHR mesh → SMPL; `-
 
 FAB builds on SAM 3D Body, DINOv3, MHR and SMPL; world mode uses ViPE, UniDepth, GeoCalib, MoGe, COLMAP and
 Mask2Former; the detector was trained with Ultralytics YOLO on SAM 3 labels; the G1 model is Unitree's, with mjlab's
-collision capsules and MuJoCo physics. Links and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+collision capsules and MuJoCo physics. The `--track oc` tracker is our own implementation following SORT (Bewley et al.,
+2016), OC-SORT (Cao et al., 2023) and ByteTrack (Zhang et al., 2022). Links and licences:
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 [page]: https://www.jinkuncao.com/FAB
 [paper]: https://arxiv.org/abs/2611.25801

@@ -14,9 +14,10 @@ Frame by frame, in order (causal):
      keypoints in between, each person's previous-frame fit as the temporal input (--boxes: the given boxes, the
      previous frame's same person by order). TensorRT engines are used when built on this GPU (fab-build-trt;
      --no-trt: the compiled PyTorch body).
-  2. Tracks: people linked across frames by box IoU (track id). The causal fixed-lag smoother (fab/retarget/smooth.py;
-     --lag 3 / --sigma 2.5 frames = 100 ms at 30 fps) runs per track on the G1, SMPL and keypoint outputs; its values
-     are stored as <output>_smoothed next to the raw per-frame ones.
+  2. Tracks: people linked across frames by box IoU (track id; --tracker oc: fab/track.Tracker's persistent ids, a
+     Kalman filter per person with OC-SORT / BYTE association). The causal fixed-lag smoother (fab/retarget/smooth.py;
+     --lag 3 / --sigma 2.5 frames = 100 ms at 30 fps) runs per track (per contiguous piece of it) on the G1, SMPL and
+     keypoint outputs; its values are stored as <output>_smoothed next to the raw per-frame ones.
   3. Video contacts: the causal contact video model (weights/shared/contact_video.pt, a GRU over a track's contact-head
      features, keypoints and their velocities) -> contact_video (16: 8 static + 8 any, fab/contact_regions.py order)
      per person, in the camera frame: right for a static camera. For a moving camera use fab-world, which runs the same
@@ -62,6 +63,13 @@ def parser():
                    help="FAB-H's SMPL fit: mesh (its default: fitted to its MHR mesh) or points (fitted to its dense points)")
     p.add_argument("--no-trt", dest="trt", action="store_false", help="fast path without the TensorRT engines")
     p.add_argument("--boxes", default="", help="npz with box (T, 4) or (T, N, 4) xyxy px per frame: these people, no detector")
+    p.add_argument("--tracker", default="iou", choices=("iou", "oc"),
+                   help="iou (default): people linked by box IoU with the previous frame; oc: fab/track.Tracker (a Kalman "
+                        "filter per person, OC-SORT / BYTE association, ids kept through short occlusions)")
+    p.add_argument("--track_every", type=int, default=10, help="the detector on every n-th frame (boxes from the keypoints "
+                   "in between)")
+    p.add_argument("--track_kw", default="", help="--tracker oc: fab/track.Tracker options as JSON (+ det_low)")
+    p.add_argument("--det_size", type=int, default=640, help="the detector's input size (960: smaller / farther people)")
     p.add_argument("--focal", type=float, default=0, help="focal length in px (default: the image diagonal)")
     p.add_argument("--fov", type=float, default=0, help="horizontal field of view in degrees (instead of --focal)")
     p.add_argument("--K", default="", help="fx,fy,cx,cy (instead of --focal / --fov)")
@@ -141,10 +149,14 @@ def smooth_tracks(frames, lag, sigma, g1_limits=None):
     g1_q_smoothed clamped to the G1 joint limits (the local-linear weights can overshoot)."""
     from fab.retarget.smooth import LagSmoother
 
-    runs = defaultdict(list)  # track -> [(frame, person)]; a track is contiguous (lost = ended)
+    runs, seen = defaultdict(list), {}  # (track, piece) -> its people; a piece is contiguous (--tracker oc: split at gaps)
     for t, people in enumerate(frames):
         for pp in people:
-            runs[pp["track"]].append(pp)
+            k = pp["track"]
+            piece = seen.get(k, (None, 0))
+            piece = (t, piece[1] + (piece[0] is not None and t != piece[0] + 1))
+            seen[k] = piece
+            runs[(k, piece[1])].append(pp)
     for run in runs.values():
         keys = [k for k in SMOOTH if k in run[0]]
         sm = LagSmoother(lag, sigma, {k: SMOOTH[k] for k in keys})
@@ -236,6 +248,14 @@ def run(a):
     kw = {"detector": ""} if boxes is not None else {}
     if not a.trt:
         kw["body_engine"] = ""
+    if a.tracker != "iou":
+        import json
+
+        kw.update(tracker=a.tracker, track_kw=json.loads(a.track_kw) if a.track_kw else None)
+    if a.track_every != 10:
+        kw["track_every"] = a.track_every
+    if a.det_size != 640:
+        kw["det_size"] = a.det_size
     pred = FABPredictor(a.model, fast=not a.eager, profile=a.profile, **kw)
     first = next(src, None)
     if first is None:
@@ -275,7 +295,8 @@ def run(a):
         torch._dynamo.reset()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    link_tracks(frames)
+    if a.tracker == "iou" or boxes is not None:
+        link_tracks(frames)
     if a.lag > 0:
         smooth_tracks(frames, a.lag, a.sigma, g1_limits)
     if a.contact_video and frames and any("contact" in pp for f in frames for pp in f):

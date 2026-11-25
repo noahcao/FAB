@@ -163,7 +163,8 @@ def export(a):
         LayerNorm2d.forward = _ln_nhwc
     with torch.no_grad():
         probe = model(*x[:5], affine=x[5])
-    names = [k for k in OUTPUTS + (("part_logits", "mask_logits") if a.seg else ()) if k in probe and probe[k] is not None]
+    extra = (("part_logits", "mask_logits") if a.seg else ()) + (("contact_feat", "contact_pts") if a.contact_feats else ())
+    names = [k for k in OUTPUTS + extra if k in probe and probe[k] is not None]
     print("outputs", {k: tuple(probe[k].shape) for k in names}, flush=True)
     wrapped = Wrapper(model, names).eval()
     with torch.no_grad():
@@ -501,6 +502,8 @@ def main():
     e.add_argument("--batch", type=int, default=1, help="people per engine call (a fixed-shape batch-N engine)")
     e.add_argument("--seg", action="store_true", help="+ the model's part / mask heads (part_logits, mask_logits)")
     e.add_argument("--ln_nhwc", action="store_true", help="export the dense head's LayerNorm2d as NHWC LayerNormalization")
+    e.add_argument("--contact_feats", action="store_true", help="+ the contact head's contact_feat / contact_pts (world mode's "
+                   "single body pass, FABPredictor(contact_feats=True))")
     b = sub.add_parser("build")
     b.add_argument("--onnx", required=True)
     b.add_argument("--out", required=True, help="the engine file (its metadata goes to <out>.json)")

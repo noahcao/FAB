@@ -9,7 +9,7 @@ Stages (each skips clips whose output exists), as scripts/fab_world.sh runs them
   world  ViPE UniDepth camera (bench/world_vipe.py --depth) at ViPE's own metric scale (--f_own 1.0), applied to the
          whole world (camera, depth, person); gravity-aligned z-up world from GeoCalib (x = the first camera's
          horizontal view direction, origin under the first pelvis); SMPL smoothed (rotations sigma_rot, pelvis
-         sigma_pos frames); scene = TSDF of ViPE's metric depth with ViPE's dynamic instances, the segmenter's people
+         sigma_pos frames at --smooth_ref_fps, scaled by the clip's fps / --smooth_ref_fps); scene = TSDF of ViPE's metric depth with ViPE's dynamic instances, the segmenter's people
          + sky (--seg_dir) and our projected body masked (open3d), no scene in front of the visible person
          (--vis_carve 1); heightfield = per cell the highest scene surface below the person's local pelvis height
          + 0.3 m (no ceilings / canopies).
@@ -59,7 +59,9 @@ def stage_fab(args):
     os.makedirs(Path(args.out) / "fab", exist_ok=True)
     body = SMPL(Path(args.bm_dir) / "smpl" / "SMPL_NEUTRAL.pkl").cuda().eval()
     fa = SimpleNamespace(fit_iters=0, fab_ckpt=args.fab_ckpt, detector=args.detector, bm_dir=args.bm_dir,
-                         fitter=args.fitter, fast=False, predictor_kw=args.predictor_kw)
+                         fitter=args.fitter, fast=bool(args.fab_fast), predictor_kw=args.predictor_kw,
+                         load_workers=args.load_workers, contact_feats=bool(args.contact_feats), track=args.track,
+                         track_kw=args.track_kw)
     for name, images, fps in clips(args):
         out = Path(args.out) / "fab" / f"{name}_raw.npz"
         if out.exists() or not (Path(args.vipe) / "intrinsics" / f"{name}.npz").exists():
@@ -67,6 +69,8 @@ def stage_fab(args):
         K = vipe_K(args.vipe, name)
         boxes = np.full((len(images), 4), np.nan)
         sb = Path(args.subject_boxes) / f"{name}.npz" if args.subject_boxes else None
+        if sb is not None and not sb.exists():  # asked for the annotated person: never fall back to the tracker
+            raise FileNotFoundError(f"--subject_boxes: no {sb}")
         if sb is not None and sb.exists():  # the annotated target person (identity only: picks among the detections)
             boxes = np.load(sb)["box"].astype(np.float64)
         fab_out, surface_idx, joints = run_fab(fa, images, K, boxes)
@@ -74,7 +78,8 @@ def stage_fab(args):
         np.savez(out, frames=np.arange(len(images)), valid=fab_out["valid"], pose_c=fit["pose"], betas=fit["betas"],
                  trans_c=fit["trans"], g1_q=fab_out["g1_q"], g1_root_c=fab_out["g1_root"], box=fab_out["box"], K=K,
                  contact=fab_out["contact"], pts=fab_out["pts"].astype(np.float32), surface_idx=np.asarray(surface_idx),
-                 joints=np.array(joints), fab_ckpt=args.fab_ckpt, fps=fps)
+                 joints=np.array(joints), fab_ckpt=args.fab_ckpt, fps=fps,
+                 **{k: v for k, v in fab_out.items() if k.startswith("contact_")})  # --contact_feats: the contact model's inputs
         print(f"[fab] {name}: {len(images)} frames, valid {fab_out['valid'].mean():.2f}", flush=True)
 
 
@@ -519,9 +524,12 @@ def stage_world(args):
         Tw[:, :3, 3] -= origin
         # smoothing in the world (offline, zero phase): rotations, pelvis
         q[:, 0] = Rotation.from_matrix(Tw[:, :3, :3] @ Rotation.from_quat(q[:, 0]).as_matrix()).as_quat()
-        q = np.concatenate([smooth_quats(q[:, :1], args.sigma_rot), smooth_quats(q[:, 1:], args.sigma_rot)], 1)
+        # the sigmas are in frames at --smooth_ref_fps (30): the same smoothing time at any frame rate (k = 1 at 30 fps)
+        k = fps / args.smooth_ref_fps
+        s_rot, s_pos = args.sigma_rot * k, args.sigma_pos * k
+        q = np.concatenate([smooth_quats(q[:, :1], s_rot), smooth_quats(q[:, 1:], s_rot)], 1)
         R_loc = Rotation.from_quat(q.reshape(-1, 4)).as_matrix().reshape(n, 24, 3, 3)
-        pel_w_s = gaussian_filter1d(pel_w - origin, args.sigma_pos, axis=0, mode="nearest")  # world, smoothed
+        pel_w_s = gaussian_filter1d(pel_w - origin, s_pos, axis=0, mode="nearest")  # world, smoothed
         pel_c_s = np.einsum("nji,nj->ni", Tw[:, :3, :3], pel_w_s - Tw[:, :3, 3])  # back to each camera frame
         # camera-frame vertices of the smoothed motion (for the masks and the ray-wise refinement)
         Rc = R_loc.copy()
@@ -619,12 +627,25 @@ def main():
     p.add_argument("--fitter", default=str(paths.shared("smpl_fitter.pt")), help="default: the released SMPL fitter")
     p.add_argument("--detector", default="deployed", help="default: the released person detector (FABPredictor's)")
     p.add_argument("--predictor_kw", default="", help="fab: FABPredictor kwargs (JSON), e.g. the released SIMPLE_PROFILE's")
+    p.add_argument("--fab_fast", type=int, default=0, help="fab: 1 = FABPredictor(fast=True): the compiled body + CUDA "
+                   "graphs (TensorRT engines when built, docs/acceleration.md)")
+    p.add_argument("--load_workers", type=int, default=1, help="fab: threads decoding the frames ahead of the GPU (same frames)")
+    p.add_argument("--contact_feats", type=int, default=0, help="fab: 1 = also store the contact head's features of this "
+                   "pass (contact_* keys; scripts/contact_clips.py tracks then replaces the second FAB pass)")
     p.add_argument("--subject_boxes", default="",
                    help="fab: dir of <clip>.npz box (N, 4) xyxy of the annotated target person (NaN: unknown); the subject is "
                         "the detection overlapping it (identity only). Empty: the most prominent tracked person")
+    p.add_argument("--track", default="iou", choices=("iou", "oc"),
+                   help="fab: iou (default, the released pick: the most prominent person, followed by box IoU) or oc "
+                        "(predict_video with fab/track.Tracker ids, tracklets linked, the subject chosen over the whole "
+                        "clip; bench/sonic_motion.picks_video)")
+    p.add_argument("--track_kw", default="", help="fab, --track oc: JSON options of fab/track.Tracker and of the subject "
+                   "choice (bench/sonic_motion.SUBJECT_KW)")
     p.add_argument("--bm_dir", default=str(paths.body_models_dir()))
     p.add_argument("--sigma_rot", type=float, default=2.0)
     p.add_argument("--sigma_pos", type=float, default=3.0)
+    p.add_argument("--smooth_ref_fps", type=float, default=30.0,
+                   help="world: --sigma_rot / --sigma_pos are frames at this rate; scaled by the clip's fps / this rate")
     p.add_argument("--voxel", type=float, default=0.03)
     p.add_argument("--trunc", type=float, default=0.12)
     p.add_argument("--max_depth", type=float, default=8.0)

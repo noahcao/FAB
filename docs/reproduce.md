@@ -55,11 +55,12 @@ stance pin, pinning the 25 clips together in sorted order (batches of up to 1,50
 
 ```bash
 python scripts/g1_refs_inputs.py frames <clip> work/<clip>          # the clip's frames + the dataset's subject boxes
-fab-world work/<clip>/frames --name <clip> --fps <fps> --subject_boxes work/<clip>/subject_boxes.npz --out world/<clip>
+fab-world work/<clip>/frames --name <clip> --fps <fps> --subject_boxes work/<clip>/subject_boxes.npz --out world/<clip> --profile paper
 python scripts/g1_refs_inputs.py collect world/<clip> inputs <clip>  # <clip>.npz + its work/ours/fab/<clip>_raw.npz
 bash scripts/reproduce_g1_refs.sh inputs refs_out                    # all 25 clips in one call -> refs_out/refs/
 ```
 
+- `--profile paper` runs the world pipeline the paper used; without it, `fab-world` runs this release's faster default.
 - For the 14 3DPW and EMDB clips, `frames` prints the `fab-world` command with the clip's fps.
 - For the 7 RICH and 4 MOYO clips, pass your dataset copy with `--src`; `frames` writes the frames the paper used
   (`SOURCES` in `scripts/g1_refs_inputs.py`). RICH: the extracted JPEG release (`val/<seq>/cam_XX/<frame>_XX.jpeg`),

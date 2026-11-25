@@ -1,12 +1,12 @@
 FAB model weights: licence
 
 This licence covers all FAB model weights (weights/fab-l, weights/fab-s, weights/fab-h and weights/shared: the person
-detector, the SMPL fitters and the video contact model) and exports derived from them (TensorRT engines and ONNX files).
-Code is covered separately by LICENSE and NOTICE.
+detector, the SMPL fitters, the video contact model and the world-motion model FAB-M) and exports derived from them
+(TensorRT engines and ONNX files). Code is covered separately by LICENSE and NOTICE.
 
 Part 3 applies to all FAB Weights. Parts 1 and 2 apply to components derived from SAM and DINOv3 respectively;
-Part 4 records the detector's distribution and training terms. Upstream terms remain applicable and this licence grants
-no rights beyond them.
+Part 4 records the detector's distribution and training terms; Part 5 passes through the Embody 3D terms. Upstream
+terms remain applicable and this licence grants no rights beyond them.
 
 
 PART 1. SAM LICENSE (PASS-THROUGH)
@@ -170,6 +170,15 @@ on them.
 The FAB Weights do not contain or redistribute any of these datasets or the SMPL model. SMPL is downloaded by the user
 under its own licence.
 
+Prohibited uses. BEDLAM and MOYO are licensed under the Max Planck Institute's Data & Software Copyright License for
+non-commercial scientific research purposes, which prohibits the use of the data and software to train methods,
+algorithms or neural networks for commercial, pornographic, military, surveillance or defamatory use. The FAB Weights may
+not be used for, or to train or build methods for, any of these uses. The AGORA licence carries the same clause, and the
+RICH licence carries it with "the Software" in place of "the Data & Software".
+The world-motion model FAB-M (weights/shared/world_motion.pt) was trained on BEDLAM (Black et al., "BEDLAM: A Synthetic
+Dataset of Bodies Exhibiting Detailed Lifelike Animated Motion", CVPR 2023) and MOYO (Tripathi et al., "3D Human Pose
+Estimation via Intuitive Physics", CVPR 2023); research publications using it must cite both.
+
 
 PART 4. DETECTOR PROVENANCE AND UPSTREAM TERMS
 
@@ -188,3 +197,32 @@ Stricter upstream terms prevail; this file does not grant permission to override
 
 The FAB Weights are provided AS IS, without warranties of any kind. The authors are not liable for claims, damages or
 other liability arising from their use.
+
+
+PART 5. EMBODY 3D (XRCIA) PASS-THROUGH
+
+Embody 3D is licensed under the XRCIA Noncommercial Research License Agreement. The FAB Weights trained with Embody 3D
+(weights/fab-l, weights/fab-s and weights/fab-h, including the heads trained on these bodies) may be used only for
+noncommercial research purposes (research not primarily intended for or directed towards commercial advantage), and
+neither they nor works derived from them may be distributed or made available for any of the uses prohibited by clause
+3.1(d) of that agreement, including:
+- (i) commercial or production use;
+- (ii) surveillance;
+- (iii) biometric processing;
+- (iv) in any manner that infringes, misappropriates, or otherwise violates any third-party rights;
+- (v) identifying or re-identifying individuals;
+- (vi) creating deepfakes;
+- (vii) in any manner that violates any applicable law, including accessing the Licensed Content from an embargoed
+  country as prohibited by the U.S. government, violating any privacy or security laws, rules, regulations, directives,
+  or governmental requirements including the General Data Privacy Regulation (Regulation (EU) 2016/679), the California
+  Consumer Privacy Act, U.S. data security regulations set forth at 28 C.F.R. Part 202, the Lei Geral de Proteção de
+  Dados, and any and all laws governing the processing of biometric information, as well as all amendments and
+  successor laws to any of the foregoing;
+- (viii) inferring health, demographic or other sensitive information;
+- (ix) in a pornographic or defamatory manner;
+- (x) to engage in the unauthorized or unlicensed practice of any profession including but not limited to financial,
+  legal, medical/health, or related professional practices;
+- (xi) military use;
+To the extent applicable, You represent, warrant, and agree that you are not a “covered person” and will not “transfer”
+or give “access” to Licensed Content to a “covered person” or “country of concern” as defined in 28 C.F.R. Part 202.
+No Embody 3D data (clips, frames or overlays) is included in this release.
