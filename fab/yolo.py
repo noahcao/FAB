@@ -410,10 +410,11 @@ class YOLODetector:
         self.names = self.net.names
 
     @torch.no_grad()
-    def detect(self, image, conf=0.25, iou=PREDICT_IOU, max_det=300, h2d=None):
-        """image (H, W, 3) uint8 RGB -> (N, 4) xyxy float32 boxes, best first."""
+    def detect(self, image, conf=0.25, iou=PREDICT_IOU, max_det=300, h2d=None, scores=False):
+        """image (H, W, 3) uint8 RGB -> (N, 4) xyxy float32 boxes, best first (scores=True: and their (N,) scores)."""
         im = letterbox(image, self.size, self.stride, self.device, h2d)
         x = nms_one_class(self.net(im)[0], conf, iou, max_det)
         if not len(x):
-            return np.zeros((0, 4), np.float32)
-        return np.ascontiguousarray(scale_boxes(x[:, :4], im.shape[2:], image.shape[:2]).float().cpu().numpy())
+            return (np.zeros((0, 4), np.float32), np.zeros(0, np.float32)) if scores else np.zeros((0, 4), np.float32)
+        b = np.ascontiguousarray(scale_boxes(x[:, :4], im.shape[2:], image.shape[:2]).float().cpu().numpy())
+        return (b, x[:, 4].float().cpu().numpy()) if scores else b

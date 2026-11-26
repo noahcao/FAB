@@ -153,6 +153,23 @@ def clip_tracks(spec):
     return out
 
 
+def prefetch(ex, fn, items, ahead=16):
+    """fn over items on the executor ex, yielded in order, at most `ahead` results waiting (bounded memory)."""
+    from collections import deque
+
+    it, q = iter(items), deque()
+    for x in it:
+        q.append(ex.submit(fn, x))
+        if len(q) >= ahead:
+            break
+    while q:
+        r = q.popleft().result()
+        nxt = next(it, None)
+        if nxt is not None:
+            q.append(ex.submit(fn, nxt))
+        yield r
+
+
 def load_model(ckpt, teacher_dir, vis_from=""):
     from fab.dense_head import dense_hr, dense_part_depth, dense_xyz_layers
     from fab.decoder_model import build_fab_decoder
@@ -201,6 +218,8 @@ def main():
     p.add_argument("--teacher_dir", default="", help="SAM 3D Body config + MHR model dir (default: fab.paths.sam3d_dir())")
     p.add_argument("--out", required=True)
     p.add_argument("--batch", type=int, default=48)
+    p.add_argument("--workers", type=int, default=1, help="clips / bench sources: threads decoding the frames ahead "
+                   "(the same pixels, in order; the crops stay serial; 1 = the serial loop)")
     p.add_argument("--min_len", type=int, default=4)
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--num_shards", type=int, default=1)
@@ -232,11 +251,22 @@ def main():
         transform = Compose([GetBBoxCenterScale(), TopdownAffine(input_size=[512, 512], use_udp=False),
                              VisionTransformWrapper(ToTensor())])
     files = {}
+
+    def clip_image(s):  # clips / bench: one frame's JPEG decode + RGB in a worker thread (pure: the same pixels)
+        image = cv2.imread(s["image"])
+        return None if image is None else cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    pre = None
+    if not pool and a.workers > 1:  # the frames decoded ahead in threads, in order; the crops stay on this thread
+        from concurrent.futures import ThreadPoolExecutor
+
+        pre = ThreadPoolExecutor(a.workers)
     for n, name in enumerate(names):
         path = out_dir / f"{name.replace('/', '_')}.npz"
         if path.exists():
             continue
         crops, geo, meta = [], [], []
+        pre_out = prefetch(pre, clip_image, [s for _, s in tracks[name]]) if pre is not None else None
         for frame, s in tracks[name]:
             if pool:
                 tp, off, nb = s["jpg_ref"]
@@ -251,10 +281,13 @@ def main():
                                                            align_corners=False)[0]
                 geo.append((s["bbox_center"], s["bbox_scale"], s["ori_size"], s["cam_int"], aff))
             else:
-                image = cv2.imread(s["image"])
+                if pre_out is not None:
+                    image = next(pre_out)
+                else:
+                    image = cv2.imread(s["image"])
+                    image = None if image is None else cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 if image is None:
                     continue
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 batch = prepare_batch(image, transform, s["bbox"][None].astype(np.float32), None, None,
                                       cam_int=torch.from_numpy(s["K"]).float()[None])
                 crop = batch["img"][0, 0]

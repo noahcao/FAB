@@ -6,8 +6,11 @@ On one work dir <work> (fab_world.sh layout: vipe/, geocalib/, vipe_fk/, geocali
   static  ViPE's run -> focal/<clip>.json {spread_over_depth, static, fx_vipe}
   focal   (static cameras) focal/{geo,moge}_<clip>.json (bench.scene_recon.focal_compare) -> the median -> focal/fixed_<clip>.json
   given   --focal F: a known focal (calibrated camera; opt-in): focal/fixed_<clip>.json, one fixed-K run, no rule
-  select  the chosen run (vipe_fk / geocalib_fk for a static camera or a given focal, else vipe / geocalib) -> vipe_sel/,
-          vipe_mvs/ (all but dense: MVS writes its own), geo_sel/ symlinks
+  fixed   (the static-camera fast path, bench/world_static.py: a fixed camera, no ViPE run) focal/{geo,moge,pi4,vggt}_<clip>.json
+          -> --rule (geocalib: GeoCalib's; median: the median of GeoCalib and MoGe-2; nc3: the median of GeoCalib, Pi4 and
+          VGGT-Omega, bench/scene_recon/focal_nc.py, non-commercial models) -> focal/fixed_<clip>.json
+  select  the chosen run (vipe_fk / geocalib_fk for a static camera or a given focal, else vipe / geocalib; --src static:
+          static / geocalib_st, the fast path) -> vipe_sel/, vipe_mvs/ (all but dense: MVS writes its own), geo_sel/ symlinks
     python -m bench.scene_recon.focal_rule static --work <work> --clip <clip>
 """
 
@@ -43,17 +46,34 @@ def focal(w, c):
     print(c, "focal", [round(x) for x in cand], "->", round(v["focal"]))
 
 
+def fixed(w, c, rule, check):
+    v = {"spread_over_depth": 0.0, "static": True, "static_fast": True, "fx_vipe": None, "check": check}
+    cand = {k: json.load(open(f"{w}/focal/{k}_{c}.json"))[c][s]["f_median"]
+            for k, s in (("geo", "geocalib"), ("moge", "moge"), ("pi4", "pi4"), ("vggt", "vggt"))
+            if os.path.exists(f"{w}/focal/{k}_{c}.json")}
+    v["focal_candidates"] = cand
+    v["focal_rule"] = rule
+    use = {"geocalib": ("geo",), "median": ("geo", "moge"), "nc3": ("geo", "pi4", "vggt")}[rule]
+    v["focal"] = float(np.exp(np.median(np.log([cand[k] for k in use]))))
+    json.dump(v, open(f"{w}/focal/{c}.json", "w"))
+    json.dump({c: v["focal"]}, open(f"{w}/focal/fixed_{c}.json", "w"))
+    print(c, "fixed camera, focal", {k: round(x) for k, x in cand.items()}, rule, "->", round(v["focal"]))
+
+
 def given(w, c, f):
     json.dump({c: f}, open(f"{w}/focal/fixed_{c}.json", "w"))
     json.dump({"focal": f, "K": "given (--focal)", "static": None}, open(f"{w}/focal/{c}.json", "w"))
 
 
-def select(w, c):
+def select(w, c, src_kind=""):
     v = json.load(open(f"{w}/focal/{c}.json"))
     src, gs = ("vipe_fk", "geocalib_fk") if v.get("K") or v["static"] else ("vipe", "geocalib")
+    if src_kind == "static":  # the static-camera fast path (bench/world_static.py)
+        src, gs = "static", "geocalib_st"
+        v["static"], v["static_fast"] = True, True
     for root in ("vipe_sel", "vipe_mvs"):
         for sub in os.listdir(f"{w}/{src}"):
-            if not os.path.isdir(f"{w}/{src}/{sub}") or sub == "logs" or (root == "vipe_mvs" and sub == "dense"):
+            if not os.path.isdir(f"{w}/{src}/{sub}") or sub in ("logs", "check") or (root == "vipe_mvs" and sub == "dense"):
                 continue
             os.makedirs(f"{w}/{root}/{sub}", exist_ok=True)
             for f in os.listdir(f"{w}/{src}/{sub}"):
@@ -69,16 +89,20 @@ def select(w, c):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("stage", choices=("static", "focal", "given", "select"))
+    p.add_argument("stage", choices=("static", "focal", "given", "fixed", "select"))
     p.add_argument("--work", required=True)
     p.add_argument("--clip", required=True)
     p.add_argument("--focal", type=float, default=0.0, help="given: the known focal (px)")
+    p.add_argument("--rule", default="geocalib", choices=("geocalib", "median", "nc3"), help="fixed: the focal from the candidates")
+    p.add_argument("--src", default="", choices=("", "static"), help="select: static = the static-camera fast path's dirs")
     a = p.parse_args()
     os.makedirs(f"{a.work}/focal", exist_ok=True)
     if a.stage == "static":
         raise SystemExit(0 if static(a.work, a.clip) else 10)  # exit 0: static (the rule applies), 10: moving (1: an error)
+    chk = f"{a.work}/static/check/{a.clip}.json"
     {"focal": lambda: focal(a.work, a.clip), "given": lambda: given(a.work, a.clip, a.focal),
-     "select": lambda: select(a.work, a.clip)}[a.stage]()
+     "fixed": lambda: fixed(a.work, a.clip, a.rule, json.load(open(chk)) if os.path.exists(chk) else None),
+     "select": lambda: select(a.work, a.clip, a.src)}[a.stage]()
 
 
 if __name__ == "__main__":

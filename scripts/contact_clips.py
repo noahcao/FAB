@@ -3,6 +3,9 @@ Stages:
   prep    the clip list + its FAB raw npz (box (T, 4), valid (T,), K, frames) -> a clips spec json for
           train/extract_contact_tracks.py --source clips:<json> (the image contact head of the FAB model), and the
           clip's ViPE cameras (T_world_cam, camera-to-world, metric) -> the video model's --test_cams dir (frame, T_world_cam)
+  tracks  (world mode's single body pass) the contact head's features stored by the FAB stage itself (the raw npz's
+          contact_* keys, bench/videomimic/recon.py fab --contact_feats 1) -> <work>/tracks/<clip>__0.npz in
+          train/extract_contact_tracks.py's format (the valid frames with a box), instead of its second FAB pass
   export  the track npz (image head: sigmoid(logits); the 2D heel / toe = its contact points in image px) and the video
           model's predictions (causal GRU on world-frame keypoints) -> <out>/<clip>__0.contact.npz with frame, time, box,
           ids, {image,video}_{static,any}_prob (T, 4: l_heel, l_toe, r_heel, r_toe), the bools at --thr, *_hk_* (l_hand,
@@ -12,6 +15,7 @@ The inputs come from environment variables (scripts/fab_world.sh sets them): FAB
 images), FAB_CONTACT_RAW and FAB_CONTACT_CAMS (path patterns with {c}), CLIPS_ONLY (a comma list of clips).
 
     python scripts/contact_clips.py prep --set clip --work <dir>
+    python scripts/contact_clips.py tracks --set clip --work <dir>
     python scripts/contact_clips.py export --set clip --work <dir> --out <dir>
 """
 
@@ -80,6 +84,39 @@ def prep(a):
     print(json.dumps(rep, indent=1))
 
 
+def tracks(a, min_len=4):
+    names, _, raw, _ = clips_of(a.set)
+    work = Path(a.work)
+    spec = json.load(open(work / "clips_spec.json"))
+    (work / "tracks").mkdir(parents=True, exist_ok=True)
+    rep = {}
+    for c in names:
+        if f"{c}__0" not in spec:
+            continue
+        sp, z = spec[f"{c}__0"], np.load(raw.format(c=c), allow_pickle=True)
+        if "contact_feat" not in z.files:
+            rep[c] = "no contact_feat in the raw npz"
+            continue
+        box, ok, fr = np.asarray(sp["box"], np.float64), np.asarray(sp["valid"], bool), np.asarray(sp["frames"], int)
+        rows = np.flatnonzero(ok & np.isfinite(box).all(1))
+        if len(rows) < min_len:
+            rep[c] = "too few frames"
+            continue
+        n, fps = len(rows), float(sp.get("fps", 30.0))
+        d = dict(logits=z["contact_logits"][rows].astype(np.float32), feat=z["contact_feat"][rows].astype(np.float16),
+                 pts=z["contact_pts"][rows].astype(np.float32), cam_t=z["contact_cam_t"][rows].astype(np.float32),
+                 frame=fr[rows].astype(np.int64), time=fr[rows] / fps, fps=np.float32(fps),
+                 ids=np.array([f"{c}__0/{int(f)}" for f in fr[rows]]), c=np.zeros((n, 8), np.uint8),
+                 valid=np.zeros((n, 8), np.uint8), h=np.full((n, 8), np.nan, np.float16), c_any=np.zeros((n, 8), np.uint8),
+                 valid_any=np.zeros((n, 8), np.uint8))
+        for k, kk in (("contact_vis", "vis"), ("contact_uv", "uv")):
+            if k in z.files:
+                d[kk] = z[k][rows].astype(np.float16 if kk == "vis" else np.float32)
+        np.savez(work / "tracks" / f"{c}__0.npz", **d)
+        rep[c] = dict(frames=n)
+    print(json.dumps(rep, indent=1))
+
+
 def export(a):
     names, _, _, _ = clips_of(a.set)
     work, out = Path(a.work), Path(a.out)
@@ -136,7 +173,7 @@ def export(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("stage", choices=["prep", "export"])
+    ap.add_argument("stage", choices=["prep", "tracks", "export"])
     ap.add_argument("--set", default="clip", choices=sorted(SETS))
     ap.add_argument("--work", required=True)
     ap.add_argument("--out", default="", help="export: the contact files' folder")
@@ -144,7 +181,7 @@ def main():
     a = ap.parse_args()
     if a.stage == "export" and not a.out:
         ap.error("export needs --out")
-    prep(a) if a.stage == "prep" else export(a)
+    {"prep": prep, "tracks": tracks, "export": export}[a.stage](a)
 
 
 if __name__ == "__main__":

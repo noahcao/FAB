@@ -82,6 +82,8 @@ Defaults are the released settings behind the paper's numbers.
 | `crop_maps` | `"auto"` (from `config.json`) | `True`: return only the 256 x 256 crop part map |
 | `full_maps` | `True` | `False`: return part maps only on the crop region (`parts_roi` + `roi`), no full-image map |
 | `track_every` | 10 | video: run the detector every N frames |
+| `det_size` | 640 | the person detector's input size (`fab-video --det_size`); 960 finds smaller / farther people |
+| `tracker`, `track_kw` | `"iou"` | video: `"oc"` gives each person a persistent `track` id (fab/track.Tracker: Kalman filter, OC-SORT + BYTE association; `fab-video --tracker oc`) and a `det_score` |
 | `dense_25d_mix` | `"auto"` | mix of lifted (2.5D) and regressed 3D points |
 | `dense_fit` | `False` | an opt-in extra refinement, not used for the paper; needs the 23-joint regressor ([training.md](training.md)) |
 | `device` | `"cuda"` | `"cpu"` needs `fast=False` |

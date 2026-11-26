@@ -30,6 +30,7 @@ def main():
     p.add_argument("--cams", required=True, help="ViPE cams dir (fx prior)")
     p.add_argument("--out", required=True)
     p.add_argument("--step", type=int, default=10)
+    p.add_argument("--max_frames", type=int, default=0, help="> 0: at most this many frames, evenly spaced (a fixed camera)")
     p.add_argument("--vipe", default=os.environ.get("VIPE_DIR", os.path.join(FAB_ENVS, "src", "vipe")))
     args = p.parse_args()
     os.environ.setdefault("TORCH_HOME", os.path.join(FAB_HOME, "hf-cache", "vipe", "torch"))
@@ -49,6 +50,8 @@ def main():
             continue
         fx = float(np.load(cam_path)["fx"])
         frames = np.arange(0, len(imgs), args.step)
+        if args.max_frames and len(frames) > args.max_frames:
+            frames = np.unique(np.linspace(0, len(imgs) - 1, args.max_frames).round().astype(int))
         up, ru, pu = [], [], []
         for f in frames:
             img = torch.from_numpy(imageio.imread(imgs[f])).permute(2, 0, 1).float().cuda() / 255.0

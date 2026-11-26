@@ -200,6 +200,151 @@ def iou(a, b):
     return w * h / max(u, 1e-9)
 
 
+CFEAT = ("contact_logits", "contact_feat", "contact_pts", "contact_uv", "contact_vis", "cam_t")  # contact_feats outputs
+
+
+def prefetch_frames(items, fn, workers, ahead=16):
+    """fn over items in a thread pool, yielded in order with at most `ahead` results waiting."""
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(workers) as ex:
+        it, q = iter(items), deque()
+        for x in it:
+            q.append(ex.submit(fn, x))
+            if len(q) >= ahead:
+                break
+        while q:
+            r = q.popleft().result()
+            nxt = next(it, None)
+            if nxt is not None:
+                q.append(ex.submit(fn, nxt))
+            yield r
+
+
+# --track oc, world mode: the subject choice's options (track_kw keys; the others go to fab/track.Tracker)
+#   link_gap      the longest gap (frames) two tracklets of one person are linked across (fab/track.link max_gap)
+#   link_dist     link's max_dist (centre distance over the box height)
+#   center_sigma  fab/track.subject's centrality width (0: off)
+#   video_every   the detector on every n-th frame (FABPredictor.track_every; default 1, every frame; the release's
+#                 video mode uses 10)
+#   pass          "video" (the only one): FABPredictor.predict_video with tracker "oc" on everyone (each person carried by
+#                 its own keypoint boxes between detector frames, oc identities), then the subject chosen over the whole
+#                 clip with FAB's keypoint y-extent per frame as the person's size (the release's "most prominent") x
+#                 centrality x score; the subject's own outputs, other frames missing
+#   init_box      a prompt for the subject (fab-world --init_box; one click, as a SAM box prompt): "x0,y0,x1,y1" on frame
+#                 init_frame, or an npz whose "box" (T, 4) gives its first finite row and that row's frame; the subject is
+#                 the linked identity overlapping it most (fab/track.prompted; IoU >= 0.3 within 30 frames; a fragment
+#                 seen < 30 frames gives way to the longer identity overlapping the prompt most), else the automatic
+#                 choice; "" (default): the automatic choice. prompt_follow 1 (default): the prompted person's own
+#                 tracklets instead of the linked identity (fab/track.prompt_follow: the prompted tracklet, a fragment
+#                 giving way to a longer one, extended by the new tracks that start where it was lost; no global link)
+SUBJECT_KW = {"link_gap": 150, "link_dist": 1.0, "center_sigma": 0.5, "pass": "video", "video_every": 1, "init_box": "",
+              "init_frame": 0, "prompt_follow": 1}
+
+
+def init_prompt(o):
+    """track_kw init_box / init_frame -> (frame, box xyxy) or None (no prompt, or an npz without a finite box)."""
+    s = o.get("init_box") or ""
+    if isinstance(s, str) and s.endswith(".npz"):
+        b = np.load(s)["box"].astype(np.float64)
+        ok = np.flatnonzero(np.isfinite(b).all(1))
+        return (int(ok[0]), b[ok[0]]) if len(ok) else None
+    if isinstance(s, str):
+        s = [float(x) for x in s.split(",") if x.strip()]
+    if len(s) == 0:
+        return None
+    if len(s) != 4:
+        raise ValueError(f"init_box {o['init_box']!r}: x0,y0,x1,y1 or an npz with a box (T, 4)")
+    return int(o.get("init_frame", 0)), np.asarray(s, np.float64)
+
+
+def choose_subject(tl, ident, hw, scores, o, heights=None):
+    """The subject identity: the prompt's (init_box) when it overlaps a tracked person, else fab/track.subject."""
+    from fab.track import prompted, subject
+
+    p = init_prompt(o)
+    if p is not None:
+        who = prompted(tl, ident, p[1], p[0])
+        if who is not None:
+            print(f"[track] init_box on frame {p[0]}: identity {who}", flush=True)
+            return who
+        print(f"[track] init_box on frame {p[0]}: no tracked person overlaps it; the automatic choice", flush=True)
+    return subject(tl, ident, hw, scores, center_sigma=float(o["center_sigma"]), heights=heights)
+
+
+def prefetch(fn, items, n=6):
+    """fn over items in order, up to n ahead on threads (image decoding off the critical path)."""
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(n) as ex:
+        q = deque()
+        for x in items:
+            q.append(ex.submit(fn, x))
+            if len(q) > n:
+                yield q.popleft().result()
+        while q:
+            yield q.popleft().result()
+
+
+VIDEO_KEYS = ("dense_surface_cam", "g1_q", "g1_root", "mesh_smpl_dense", "mesh_smpl", "box", "contact", "smpl_pose",
+              "smpl_betas", "mesh_smpl_fit")
+
+
+def picks_video(fab, images, load, K, gt_boxes, o):
+    """--track oc: FABPredictor.predict_video (tracker "oc") on every person, then the subject's outputs per
+    frame (None where it is not seen). The subject: with the dataset's boxes (gt_boxes, identity only) the person
+    overlapping the frame's box most (IoU > 0.2); else the tracklets linked (fab/track.link) and the identity with the
+    largest sum over its frames of FAB's keypoint y-extent / H x centrality x score (fab/track.subject)."""
+    from fab.track import link
+
+    per, ext, sc = {}, {}, {}
+    hw = cv2.imread(images[0]).shape[:2]
+    every0, fab.track_every = fab.track_every, int(o["video_every"])
+    for t, people in enumerate(fab.predict_video(prefetch(load, images), K)):
+        for pp in people:
+            k = pp["track"]
+            per.setdefault(k, {})[t] = {q: pp[q] for q in VIDEO_KEYS if q in pp}
+            ext.setdefault(k, {})[t] = float(np.ptp(pp["keypoints2d_projected"][:, 1]))
+            sc.setdefault(k, {})[t] = float(pp.get("det_score", 1.0))
+    fab.track_every = every0
+    T = len(images)
+    out = [None] * T
+    if gt_boxes is not None:
+        for t in range(T):
+            if not np.isfinite(gt_boxes[t]).all():
+                continue
+            c = [(iou(d[t]["box"], gt_boxes[t]), d[t]) for d in per.values() if t in d]
+            if c and max(c, key=lambda x: x[0])[0] > 0.2:
+                out[t] = max(c, key=lambda x: x[0])[1]
+        return iter(out)
+    tl = {k: {t: d[t]["box"] for t in d} for k, d in per.items()}
+    pr = init_prompt(o) if int(o.get("prompt_follow", 0)) else None
+    ks = []
+    if tl and pr is not None:  # prompt_follow: the prompted person's own tracklets (fab/track.prompt_follow), no link
+        from fab.track import prompt_follow
+
+        ks = prompt_follow(tl, pr[1], pr[0], max_gap=int(o["link_gap"]), max_dist=float(o["link_dist"]))
+        for k in ks:
+            for t, pp in per[k].items():
+                out[t] = pp
+        print(f"[track] init_box (follow) on frame {pr[0]}: tracklets {ks}, {np.mean([x is not None for x in out]):.3f} "
+              f"of the frames", flush=True)
+    if tl and not ks:
+        ident = link(tl, max_gap=int(o["link_gap"]), max_dist=float(o["link_dist"]))
+        who = choose_subject(tl, ident, hw, sc, o, heights=ext)
+        for k, d in per.items():
+            if ident.get(k, k) == who:
+                for t, pp in d.items():
+                    out[t] = pp
+        tm = getattr(fab, "track_timing", {})
+        print(f"[track] video pass: {len(tl)} tracklets, {len(set(ident.values()))} identities, subject {who}: "
+              f"{np.mean([x is not None for x in out]):.3f} of the frames; timing {json.dumps({k: round(v, 3) for k, v in tm.items()})}",
+              flush=True)
+    return iter(out)
+
+
 def run_fab(args, images, K, gt_boxes):
     """Per frame: the subject's dense surface points (camera frame), G1 head outputs, dense mesh. The subject is the
     detection overlapping the dataset's box (identity only); frames without that box are left missing (filled by
@@ -208,30 +353,53 @@ def run_fab(args, images, K, gt_boxes):
 
     one_pass = args.fit_iters == 0  # the released path: the predictor's graph-captured one-pass SMPL fit
     kw = json.loads(args.predictor_kw) if args.predictor_kw else {}  # e.g. a predictor profile's kwargs
+    world_kw = {}
+    if (getattr(args, "track", "iou") or "iou") == "oc":  # --track oc: the tracker's and the subject choice's options
+        tk = json.loads(args.track_kw) if getattr(args, "track_kw", "") else {}
+        world_kw = {k: tk.pop(k) for k in list(tk) if k in SUBJECT_KW}
+        kw.update(tracker="oc", track_kw=tk)
     fab = FABPredictor(args.fab_ckpt, detector=args.detector, bm_dir=args.bm_dir,
-                       smpl_fitter=kw.pop("smpl_fitter", args.fitter) if one_pass else "", fast=args.fast, **kw)
+                       smpl_fitter=kw.pop("smpl_fitter", args.fitter) if one_pass else "", fast=args.fast,
+                       **({"contact_feats": True} if getattr(args, "contact_feats", False) else {}), **kw)
     load = lambda p: cv2.cvtColor(cv2.imread(p), cv2.COLOR_BGR2RGB)  # noqa: E731
     keys = ("pts", "g1_q", "g1_root", "mesh", "box", "contact") + (("fit_pose", "fit_betas", "fit_mesh") if one_pass else ())
+    frames = (load(p) for p in images)
+    if getattr(args, "load_workers", 0) > 1:  # JPEG decode in threads, ahead of the GPU (the same frames, in order)
+        frames = prefetch_frames(images, load, args.load_workers)
     out = {"valid": [], **{k: [] for k in keys}}
-    prev = None
     boxed = np.isfinite(gt_boxes).all(1).any()
-    for t, people in enumerate(fab.predict_video((load(p) for p in images), K)):
-        pp = None
-        if people and np.isfinite(gt_boxes[t]).all():
-            best = max(people, key=lambda x: iou(x["box"], gt_boxes[t]))
-            pp = best if iou(best["box"], gt_boxes[t]) > 0.2 else None
-        elif people and not boxed:  # frames without the dataset's box (subject out of view) stay missing
-            if prev is not None:
-                best = max(people, key=lambda x: iou(x["box"], prev))
-                pp = best if iou(best["box"], prev) > 0.1 else None
-            if pp is None:
-                pp = max(people, key=lambda x: np.ptp(x["keypoints2d_projected"][:, 1]))  # the most prominent person
+
+    def picks_iou(fab=fab):  # the released subject pick
+        prev = None
+        for t, people in enumerate(fab.predict_video(frames, K)):
+            pp = None
+            if people and np.isfinite(gt_boxes[t]).all():
+                best = max(people, key=lambda x: iou(x["box"], gt_boxes[t]))
+                pp = best if iou(best["box"], gt_boxes[t]) > 0.2 else None
+            elif people and not boxed:  # frames without the dataset's box (subject out of view) stay missing
+                if prev is not None:
+                    best = max(people, key=lambda x: iou(x["box"], prev))
+                    pp = best if iou(best["box"], prev) > 0.1 else None
+                if pp is None:
+                    pp = max(people, key=lambda x: np.ptp(x["keypoints2d_projected"][:, 1]))  # the most prominent person
+            if pp is not None:
+                prev = pp["box"]
+            yield pp
+
+    track = getattr(args, "track", "iou") or "iou"
+    wo = {**SUBJECT_KW, **world_kw}
+    if track == "oc":
+        if wo["pass"] != "video":
+            raise ValueError(f"track_kw pass {wo['pass']!r}: 'video'")
+        picks = picks_video(fab, images, load, K, gt_boxes if boxed else None, wo)
+    else:
+        picks = picks_iou()
+    for t, pp in enumerate(picks):
         out["valid"].append(pp is not None)
         if pp is None:
-            for k in keys:
+            for k in list(keys) + [k for k in out if k.startswith("contact_")]:
                 out[k].append(out[k][-1] if out[k] else None)
             continue
-        prev = pp["box"]
         # FAB-H (no dense head, no G1 head): no surface points (only the --fit_iters L-BFGS path needs them) and
         # identity G1 head outputs (its references use IK on the fitted SMPL)
         out["pts"].append(pp["dense_surface_cam"] if "dense_surface_cam" in pp else np.zeros((1, 3), np.float32))  # camera frame
@@ -240,14 +408,26 @@ def run_fab(args, images, K, gt_boxes):
         out["mesh"].append(pp.get("mesh_smpl_dense", pp["mesh_smpl"]))
         out["box"].append(pp["box"])
         out["contact"].append(pp.get("contact", np.full(8, np.nan, np.float32)))  # contact head (if the checkpoint has one)
+        if "contact_feat" in pp:  # FABPredictor(contact_feats=True): the video contact model's inputs from this same pass
+            for k in CFEAT:
+                if k in pp or k == "cam_t":
+                    out.setdefault(k if k != "cam_t" else "contact_cam_t", [None] * t)
+            for k in CFEAT:
+                kk = k if k != "cam_t" else "contact_cam_t"
+                if kk in out:
+                    out[kk].append(pp[k])
         if one_pass:
             out["fit_pose"].append(pp["smpl_pose"])
             out["fit_betas"].append(pp["smpl_betas"])
             out["fit_mesh"].append(pp["mesh_smpl_fit"])
     first = next(i for i, v in enumerate(out["valid"]) if v)
+    keys = list(keys) + [k for k in out if k.startswith("contact_") and k != "contact"]
     for k in keys:  # leading misses: first detection
-        out[k] = np.stack([out[k][first] if x is None else x for x in out[k]]).astype(np.float32)
+        out[k] = np.stack([out[k][first] if x is None else x for x in out[k]]).astype(
+            np.float16 if k in ("contact_feat", "contact_vis") else np.float32)
     out["valid"] = np.array(out["valid"])
+    if getattr(fab, "track_timing", None) is not None:  # --track oc: host seconds per stage
+        out["track_timing"] = dict(fab.track_timing)
     dense = getattr(fab.model, "dense_head", None)
     surface_idx = dense.surface_idx.cpu().numpy() if dense is not None else np.zeros(0, np.int64)
     if getattr(fab, "kin", None) is not None:

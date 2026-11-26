@@ -84,7 +84,7 @@ def frames(clip, d, src=None):
         else:
             moyo_frames(src, cam, first, last, fd)
         print(f"{clip}: {len(list(fd.glob('*.jpg')))} frames ({ds} {split} {sseq}, camera {cam}, frames {first}..{last}) -> {fd}")
-        print(f"fab-world {fd} --name {clip} --fps {fps} --out <fab-world out>")
+        print(f"fab-world {fd} --name {clip} --fps {fps} --out <fab-world out> --profile paper")
         return
     from bench.sonic_motion import load_sequence
 
@@ -98,7 +98,7 @@ def frames(clip, d, src=None):
             os.symlink(os.path.abspath(images[i]), dst)
     np.savez(d / "subject_boxes.npz", box=np.asarray(boxes, np.float64)[sel])
     print(f"{clip}: {len(sel)} frames ({ds} {seq}, from frame {start}, {fps} fps) -> {fd}")
-    print(f"fab-world {fd} --name {clip} --fps {fps} --subject_boxes {d / 'subject_boxes.npz'} --out <fab-world out>")
+    print(f"fab-world {fd} --name {clip} --fps {fps} --subject_boxes {d / 'subject_boxes.npz'} --out <fab-world out> --profile paper")
 
 
 def collect(out, inp, clip):
